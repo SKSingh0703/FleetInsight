@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import morgan from "morgan";
 
-import uploadRoutes from "./routes/uploadRoutes.js";
 import apiRoutes from "./routes/index.js";
 
 export default function createApp() {
@@ -15,9 +14,6 @@ export default function createApp() {
   app.get("/health", (req, res) => {
     res.json({ status: "ok" });
   });
-
-  // Phase 1 requirement: POST /upload (root path)
-  app.use(uploadRoutes);
 
   app.use("/api", apiRoutes);
 

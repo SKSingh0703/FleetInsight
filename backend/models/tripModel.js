@@ -27,6 +27,7 @@ const tripSchema = new mongoose.Schema(
     invoiceNumber: { type: String, required: true, unique: true, index: true, trim: true },
     chassisNumber: { type: String, required: true, index: true, trim: true },
     vehicleNumber: { type: String, required: true, index: true, trim: true },
+    vehicleSuffix: { type: String, index: true, trim: true },
 
     // OWN vs MARKET (MARKET typically has a book number)
     tripType: { type: String, required: true, enum: tripTypeEnum, index: true },
@@ -90,6 +91,7 @@ tripSchema.virtual("profit").get(function profit() {
 
 // Helpful compound indexes for later filtering/search
 tripSchema.index({ vehicleNumber: 1, "loading.date": -1 });
+tripSchema.index({ vehicleSuffix: 1, "loading.date": -1 });
 tripSchema.index({ "loading.location.name": 1 });
 tripSchema.index({ "unloading.location.name": 1 });
 tripSchema.index({ partyType: 1, "loading.date": -1 });

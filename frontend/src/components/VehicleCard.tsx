@@ -1,5 +1,5 @@
 import { Truck, TrendingUp, TrendingDown } from "lucide-react";
-import { Vehicle } from "@/lib/mock-data";
+import type { VehicleSummary as Vehicle } from "@/services/api";
 import { motion } from "framer-motion";
 
 interface VehicleCardProps {

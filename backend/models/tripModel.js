@@ -21,10 +21,21 @@ const movementSchema = new Schema(
   { _id: false }
 );
 
+const sheetMetaSchema = new Schema(
+  {
+    sheetName: { type: String, trim: true },
+    rowNumber: { type: Number },
+    raw: { type: Schema.Types.Mixed, default: {} },
+    normalized: { type: Schema.Types.Mixed, default: {} },
+  },
+  { _id: false }
+);
+
 const tripSchema = new mongoose.Schema(
   {
     // Core identifiers
-    invoiceNumber: { type: String, required: true, unique: true, index: true, trim: true },
+    tripKey: { type: String, required: true, unique: true, index: true, trim: true },
+    invoiceNumber: { type: String, index: true, trim: true },
     chassisNumber: { type: String, required: true, index: true, trim: true },
     vehicleNumber: { type: String, required: true, index: true, trim: true },
     vehicleSuffix: { type: String, index: true, trim: true },
@@ -42,6 +53,7 @@ const tripSchema = new mongoose.Schema(
 
     // Party classification
     partyType: { type: String, required: true, enum: partyTypeEnum, index: true },
+    partyName: { type: String, trim: true, index: true },
 
     // Loading + Unloading
     loading: { type: movementSchema, required: true },
@@ -59,6 +71,9 @@ const tripSchema = new mongoose.Schema(
 
     // Flexible JSON for future extensions (no schema migration needed)
     extensions: { type: Schema.Types.Mixed, default: {} },
+
+    // Original sheet row (to render trip details with familiar labels later)
+    sheet: { type: sheetMetaSchema, default: {} },
   },
   {
     timestamps: true,

@@ -27,6 +27,21 @@ function buildDateRangeQuery(fieldPath, dateRange) {
   return { [fieldPath]: q };
 }
 
+function buildGenericTripDateRange(dateRange) {
+  if (!dateRange || typeof dateRange !== "object") return undefined;
+  const from = toDateIfProvided(dateRange.from);
+  const to = toDateIfProvided(dateRange.to);
+  if (!from && !to) return undefined;
+
+  const q = {};
+  if (from) q.$gte = from;
+  if (to) q.$lte = to;
+
+  return {
+    $or: [{ "loading.date": q }, { "unloading.date": q }],
+  };
+}
+
 function normalizeToken(v) {
   if (v == null) return "";
   return String(v).trim();
@@ -49,11 +64,31 @@ export function buildMatchFromFilters(filters) {
   const f = filters && typeof filters === "object" ? filters : {};
   const match = {};
 
+  const and = [];
+
+  const tripKey = normalizeToken(f.tripKey);
+  if (tripKey) match.tripKey = tripKey;
+
   const invoiceNumber = normalizeToken(f.invoiceNumber);
   if (invoiceNumber) match.invoiceNumber = invoiceNumber;
 
   const chassisNumber = normalizeToken(f.chassisNumber);
   if (chassisNumber) match.chassisNumber = chassisNumber;
+
+  const partyName = normalizeToken(f.partyName);
+  if (partyName) {
+    match.partyName = { $regex: escapeRegex(partyName), $options: "i" };
+  }
+
+  const loadingPoint = normalizeToken(f.loadingPoint);
+  if (loadingPoint) {
+    match["loading.location.name"] = { $regex: escapeRegex(loadingPoint), $options: "i" };
+  }
+
+  const unloadingPoint = normalizeToken(f.unloadingPoint);
+  if (unloadingPoint) {
+    match["unloading.location.name"] = { $regex: escapeRegex(unloadingPoint), $options: "i" };
+  }
 
   const vehicleNumberInput = normalizeToken(f.vehicleNumber);
   if (vehicleNumberInput) {
@@ -100,6 +135,9 @@ export function buildMatchFromFilters(filters) {
   const unloadingRange = buildDateRangeQuery("unloading.date", f.unloadingDateRange);
   if (unloadingRange) Object.assign(match, unloadingRange);
 
+  const genericTripRange = buildGenericTripDateRange(f.tripDateRange);
+  if (genericTripRange) and.push(genericTripRange);
+
   // Month filtering (derived from loading.date)
   // Accepts: { month: 1-12, year?: 2026 }
   const month = Number(f.month);
@@ -113,6 +151,10 @@ export function buildMatchFromFilters(filters) {
       $gte: start,
       $lt: end,
     };
+  }
+
+  if (and.length > 0) {
+    match.$and = [...(match.$and || []), ...and];
   }
 
   return match;

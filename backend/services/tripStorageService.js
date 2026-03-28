@@ -30,7 +30,7 @@ export async function saveTrips(trips) {
     const cleaned = removeUndefinedDeep(trip);
     return {
       updateOne: {
-        filter: { invoiceNumber: cleaned.invoiceNumber },
+        filter: { tripKey: cleaned.tripKey },
         update: { $set: cleaned },
         upsert: true,
       },

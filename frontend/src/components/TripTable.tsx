@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Trip } from "@/lib/mock-data";
+import type { UiTrip as Trip } from "@/services/api";
 import { TripDetailModal } from "@/components/TripDetailModal";
 import { ArrowUpDown } from "lucide-react";
 
@@ -47,7 +47,12 @@ export function TripTable({ trips }: TripTableProps) {
                 <SortHeader label="Vehicle" field="vehicleNumber" />
                 <SortHeader label="Date" field="date" />
                 <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Route</th>
-                <SortHeader label="Income" field="income" />
+                <SortHeader label="Party" field="partyType" />
+                <SortHeader label="Loading Wt (t)" field="loadingWeightTons" />
+                <SortHeader label="Unloading Wt (t)" field="unloadingWeightTons" />
+                <SortHeader label="Shortage (t)" field="shortageTons" />
+                <SortHeader label="Rate" field="rate" />
+                <SortHeader label="Total Freight" field="totalFreight" />
                 <SortHeader label="Expenses" field="totalExpenses" />
                 <SortHeader label="Profit" field="profit" />
               </tr>
@@ -63,7 +68,14 @@ export function TripTable({ trips }: TripTableProps) {
                   <td className="px-4 py-3 text-muted-foreground">{trip.vehicleNumber}</td>
                   <td className="px-4 py-3 text-muted-foreground">{trip.date}</td>
                   <td className="px-4 py-3 text-muted-foreground">{trip.loadingPoint} → {trip.unloadingPoint}</td>
-                  <td className="px-4 py-3 font-medium">₹{trip.income.toLocaleString("en-IN")}</td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {trip.partyName && trip.partyName !== "UNKNOWN" ? `${trip.partyType} · ${trip.partyName}` : trip.partyType}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{trip.loadingWeightTons || 0}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{trip.unloadingWeightTons || 0}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{trip.shortageTons || 0}</td>
+                  <td className="px-4 py-3 text-muted-foreground">₹{trip.rate.toLocaleString("en-IN")}</td>
+                  <td className="px-4 py-3 font-medium">₹{trip.totalFreight.toLocaleString("en-IN")}</td>
                   <td className="px-4 py-3 text-destructive">₹{trip.totalExpenses.toLocaleString("en-IN")}</td>
                   <td className={`px-4 py-3 font-semibold ${trip.profit >= 0 ? "text-success" : "text-destructive"}`}>
                     ₹{trip.profit.toLocaleString("en-IN")}
@@ -71,7 +83,7 @@ export function TripTable({ trips }: TripTableProps) {
                 </tr>
               ))}
               {sorted.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">No trips found</td></tr>
+                <tr><td colSpan={12} className="px-4 py-12 text-center text-muted-foreground">No trips found</td></tr>
               )}
             </tbody>
           </table>

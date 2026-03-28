@@ -26,13 +26,10 @@ export async function upload(req, res) {
       rawRows: rawRows.length,
       processedTrips: trips.length,
       rejectedRows: errors.length,
+      // Backward-compatible field name (duplicates are now tripKey-based)
       duplicateInvoiceNumbers: duplicates.length,
     },
-    trips,
-    errors,
-    duplicates,
-    duplicateHandling,
+    errorRows: errors || [],
     storage,
   });
 }
-

@@ -2,9 +2,11 @@ import {
   extractTripFields,
   computeTotalFreight,
   getDefaultRatePerTon,
+  buildNormalizedRow,
 } from "./mappingService.js";
 
 import { normalizeVehicle } from "../utils/vehicleNormalization.js";
+import crypto from "crypto";
 
 const UNKNOWN_TEXT = "UNKNOWN";
 
@@ -37,9 +39,9 @@ function isFiniteNonNegative(n) {
 export async function processRows(rawRows) {
   const trips = [];
   const errors = [];
-  const invoiceOccurrences = new Map();
+  const keyOccurrences = new Map();
   const duplicatesSkipped = [];
-  const invoiceIndex = new Map();
+  const keyIndex = new Map();
 
   for (const entry of rawRows || []) {
     const { sheetName, rowNumber, raw } = entry || {};
@@ -52,6 +54,7 @@ export async function processRows(rawRows) {
       const { vehicleNumber, vehicleSuffix } = normalizeVehicle(rawVehicleNumber);
       const tripType = extracted.tripType || "OWN";
       const partyType = extracted.partyType || "OTHER";
+      const partyName = requiredString(extracted.partyName) || undefined;
       const bookNumber = requiredString(extracted.bookNumber);
 
       const loadingDate = extracted.loadingDate;
@@ -60,7 +63,7 @@ export async function processRows(rawRows) {
       const unloadingPoint = normalizeLocationName(extracted.unloadingPoint);
 
       const loadingWeightTons = extracted.loadingWeightTons;
-      const unloadingWeightTons = extracted.unloadingWeightTons;
+      const rawUnloadingWeightTons = extracted.unloadingWeightTons;
 
       const ratePerTon = isFiniteNonNegative(extracted.ratePerTon)
         ? extracted.ratePerTon
@@ -78,19 +81,18 @@ export async function processRows(rawRows) {
 
       const rowIssues = [];
 
-      if (!invoiceNumber) rowIssues.push("Missing invoiceNumber");
       if (!vehicleNumber) rowIssues.push("Missing vehicleNumber");
 
       // Required fields (as per relaxed rules)
       if (!isValidDate(loadingDate)) rowIssues.push("Invalid or missing loading date");
       if (!isFiniteNonNegative(loadingWeightTons)) rowIssues.push("Invalid loading weight");
-      if (!isFiniteNonNegative(unloadingWeightTons)) rowIssues.push("Invalid unloading weight");
 
-      if (invoiceNumber) {
-        const list = invoiceOccurrences.get(invoiceNumber) || [];
-        list.push({ sheetName, rowNumber });
-        invoiceOccurrences.set(invoiceNumber, list);
-      }
+      const unloadingWeightAssumed =
+        !isFiniteNonNegative(rawUnloadingWeightTons) && isFiniteNonNegative(loadingWeightTons);
+
+      const unloadingWeightTons = unloadingWeightAssumed ? loadingWeightTons : rawUnloadingWeightTons;
+
+      if (!isFiniteNonNegative(unloadingWeightTons)) rowIssues.push("Invalid unloading weight");
 
       // Optional fields: keep if present, otherwise fill safe defaults so schema compatibility is preserved.
       const effectiveTripType = isValidTripType(tripType) ? tripType : "OWN";
@@ -103,18 +105,50 @@ export async function processRows(rawRows) {
       const totalFreight = computeTotalFreight({ unloadingWeightTons, ratePerTon });
       if (!Number.isFinite(totalFreight)) rowIssues.push("Failed to compute totalFreight");
 
+      const tripKeyPayload = {
+        vehicleNumber,
+        chassisNumber,
+        tripType: finalTripType,
+        partyType: effectivePartyType,
+        bookNumber: finalTripType === "MARKET" ? bookNumber : "",
+        loadingDate: isValidDate(loadingDate) ? loadingDate.toISOString().slice(0, 10) : "",
+        unloadingDate: isValidDate(effectiveUnloadingDate) ? effectiveUnloadingDate.toISOString().slice(0, 10) : "",
+        loadingPoint,
+        unloadingPoint,
+        loadingWeightTons,
+        unloadingWeightTons,
+        ratePerTon,
+      };
+      const tripKey = crypto
+        .createHash("sha256")
+        .update(JSON.stringify(tripKeyPayload))
+        .digest("hex");
+
       if (rowIssues.length > 0) {
-        errors.push({ sheetName, rowNumber, invoiceNumber: invoiceNumber || undefined, issues: rowIssues });
+        errors.push({
+          sheetName,
+          rowNumber,
+          invoiceNumber: invoiceNumber || undefined,
+          tripKey,
+          issues: rowIssues,
+          raw,
+        });
         continue;
       }
 
+      const list = keyOccurrences.get(tripKey) || [];
+      list.push({ sheetName, rowNumber, invoiceNumber: invoiceNumber || undefined });
+      keyOccurrences.set(tripKey, list);
+
       const trip = {
+        tripKey,
         invoiceNumber,
         chassisNumber,
         vehicleNumber,
         ...(vehicleSuffix ? { vehicleSuffix } : {}),
         tripType: finalTripType,
         partyType: effectivePartyType,
+        ...(partyName ? { partyName } : {}),
         ...(finalTripType === "MARKET" && bookNumber ? { bookNumber } : {}),
         loading: {
           date: loadingDate,
@@ -128,35 +162,45 @@ export async function processRows(rawRows) {
         },
         ratePerTon,
         expenses,
-        extensions,
+        extensions: {
+          ...(extensions || {}),
+          ...(unloadingWeightAssumed ? { unloadingWeightAssumed: true } : {}),
+        },
+        sheet: {
+          sheetName,
+          rowNumber,
+          raw,
+          normalized: buildNormalizedRow(raw),
+        },
       };
 
       // If duplicates exist within the same upload, keep the *latest* row as authoritative.
-      const existingIndex = invoiceIndex.get(invoiceNumber);
+      const existingIndex = keyIndex.get(tripKey);
       if (existingIndex !== undefined) {
-        duplicatesSkipped.push({ invoiceNumber, replacedWith: { sheetName, rowNumber } });
+        duplicatesSkipped.push({ tripKey, replacedWith: { sheetName, rowNumber } });
         trips[existingIndex] = trip;
       } else {
-        invoiceIndex.set(invoiceNumber, trips.length);
+        keyIndex.set(tripKey, trips.length);
         trips.push(trip);
       }
     } catch (err) {
       errors.push({
         sheetName,
         rowNumber,
+        raw,
         issues: [typeof err?.message === "string" ? err.message : "Unknown processing error"],
       });
     }
   }
 
   const duplicates = [];
-  for (const [invoiceNumber, occurrences] of invoiceOccurrences.entries()) {
+  for (const [tripKey, occurrences] of keyOccurrences.entries()) {
     if ((occurrences?.length || 0) > 1) {
-      duplicates.push({ invoiceNumber, count: occurrences.length, occurrences });
+      duplicates.push({ tripKey, count: occurrences.length, occurrences });
     }
   }
 
-  duplicates.sort((a, b) => b.count - a.count || String(a.invoiceNumber).localeCompare(String(b.invoiceNumber)));
+  duplicates.sort((a, b) => b.count - a.count || String(a.tripKey).localeCompare(String(b.tripKey)));
 
   return {
     trips,

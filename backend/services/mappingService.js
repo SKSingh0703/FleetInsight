@@ -11,6 +11,20 @@ function normalizeHeader(header) {
     .replace(/\.+/g, ".");
 }
 
+export function normalizeHeaderKey(header) {
+  return normalizeHeader(header);
+}
+
+export function buildNormalizedRow(rawRow) {
+  const out = {};
+  for (const [key, value] of Object.entries(rawRow || {})) {
+    const nk = normalizeHeader(key);
+    if (!nk) continue;
+    if (out[nk] == null || String(out[nk]).trim() === "") out[nk] = value;
+  }
+  return out;
+}
+
 function buildHeaderIndex(rawRow) {
   const index = new Map();
   for (const [key, value] of Object.entries(rawRow || {})) {
@@ -106,9 +120,38 @@ function toDate(value) {
 }
 
 export const COLUMN_ALIASES = {
-  invoiceNumber: ["INVOICE NO.", "INVOICE NO", "INVOICE", "INVOICE NUMBER", "INV NO", "INV.NO", "invoiceNumber"],
-  chassisNumber: ["CH.NO.", "CH NO", "CHASSIS", "CHASSIS NO", "CHASSIS NUMBER", "chassisNumber"],
-  vehicleNumber: ["V.NO.", "V NO", "VEHICLE", "VEHICLE NO", "VEHICLE NUMBER", "vehicleNumber"],
+  invoiceNumber: [
+    "INVOICE NO.",
+    "INVOICE NO",
+    "INVOICE",
+    "INVOICE NUMBER",
+    "INV NO",
+    "INV.NO",
+    "INV.NO.",
+    "invoiceNumber",
+  ],
+  chassisNumber: [
+    "CH.NO.",
+    "CH NO",
+    "CHASSIS",
+    "CHASSIS NO",
+    "CHASSIS NO.",
+    "CHASSIS NUMBER",
+    "chassisNumber",
+  ],
+  vehicleNumber: [
+    "V.NO.",
+    "V.NO",
+    "V. NO.",
+    "V. NO",
+    "VNO",
+    "V NO",
+    "VEHICLE",
+    "VEHICLE NO",
+    "VEHICLE NO.",
+    "VEHICLE NUMBER",
+    "vehicleNumber",
+  ],
   tripType: ["OWN/MARKET", "OWN MARKET", "TRIP TYPE", "TYPE", "tripType"],
   bookNumber: ["BOOK No.", "BOOK NO", "BOOK", "bookNumber"],
 
@@ -131,6 +174,17 @@ export const COLUMN_ALIASES = {
   totalAdvance: ["TOTAL ADV.", "TOTAL ADV", "ADVANCE", "TOTAL ADVANCE"],
 
   party: ["PARTY.", "PARTY", "PARTY TYPE", "partyType"],
+  partyName: ["PARTY NAME", "PARTY NAME.", "PARTYNAME", "CUSTOMER", "CUSTOMER NAME"],
+
+  challanDate: ["CHALLAN DATE", "CHALAN DATE", "CHALLAN DT", "CHALAN DT"],
+  challanNumber: ["CHALLAN", "CHALAN", "CHALLAN NO", "CHALAN NO", "CHALLAN NO.", "CHALAN NO."],
+  billNumber: ["BILL NO.", "BILL NO", "BILL", "BILL NUMBER"],
+  billDate: ["BILL DATE", "BILL DT", "BILL DT.", "BILLDATE"],
+  marketPaymentDate: ["MARKET PAYMENT DATE", "MKT PAYMENT DATE", "MARKET PAY DATE", "PAYMENT DATE"],
+  bank: ["BANK", "BANK NAME"],
+  account: ["ACCT", "ACCT.", "ACCOUNT", "A/C", "A/C NO", "ACCOUNT NO"],
+  amount: ["AMT.", "AMT", "AMOUNT"],
+  detailsText: ["DETAILS", "DETAIL", "NARRATION", "REMARK", "REMARKS"],
 };
 
 export function extractTripFields(rawRow) {
@@ -171,18 +225,20 @@ export function extractTripFields(rawRow) {
     return r > 0 ? r : DEFAULT_RATE_PER_TON;
   })();
 
-  const cashValues = [
-    ...getAllValues(rawRow, COLUMN_ALIASES.cash1),
-    ...getAllValues(rawRow, COLUMN_ALIASES.cash2),
-  ];
-  const cash = cashValues.reduce((sum, v) => sum + toNumber(v, { defaultValue: 0 }), 0);
+  const cashPValues = getAllValues(rawRow, COLUMN_ALIASES.cash1);
+  const cashPCOValues = getAllValues(rawRow, COLUMN_ALIASES.cash2);
+  const cashP = cashPValues.reduce((sum, v) => sum + toNumber(v, { defaultValue: 0 }), 0);
+  const cashPCO = cashPCOValues.reduce((sum, v) => sum + toNumber(v, { defaultValue: 0 }), 0);
+  const cash = cashP + cashPCO;
 
-  const diesel = getAllValues(rawRow, COLUMN_ALIASES.diesel).reduce(
+  const dieselValues = getAllValues(rawRow, COLUMN_ALIASES.diesel);
+  const diesel = dieselValues.reduce(
     (sum, v) => sum + toNumber(v, { defaultValue: 0 }),
     0
   );
 
-  const other = getAllValues(rawRow, COLUMN_ALIASES.other).reduce(
+  const otherValues = getAllValues(rawRow, COLUMN_ALIASES.other);
+  const other = otherValues.reduce(
     (sum, v) => sum + toNumber(v, { defaultValue: 0 }),
     0
   );
@@ -190,6 +246,17 @@ export function extractTripFields(rawRow) {
   const totalAdvance = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.totalAdvance), { defaultValue: 0 });
 
   const partyType = normalizePartyType(getFirstValue(rawRow, COLUMN_ALIASES.party));
+  const partyName = getFirstValue(rawRow, COLUMN_ALIASES.partyName);
+
+  const challanDate = toDate(getFirstValue(rawRow, COLUMN_ALIASES.challanDate));
+  const challanNumber = getFirstValue(rawRow, COLUMN_ALIASES.challanNumber);
+  const billNumber = getFirstValue(rawRow, COLUMN_ALIASES.billNumber);
+  const billDate = toDate(getFirstValue(rawRow, COLUMN_ALIASES.billDate));
+  const marketPaymentDate = toDate(getFirstValue(rawRow, COLUMN_ALIASES.marketPaymentDate));
+  const bank = getFirstValue(rawRow, COLUMN_ALIASES.bank);
+  const account = getFirstValue(rawRow, COLUMN_ALIASES.account);
+  const amount = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.amount), { defaultValue: 0 });
+  const detailsText = getFirstValue(rawRow, COLUMN_ALIASES.detailsText);
 
   return {
     invoiceNumber,
@@ -205,8 +272,27 @@ export function extractTripFields(rawRow) {
     unloadingWeightTons,
     ratePerTon,
     expenses: { cash, diesel, other },
-    extensions: { totalAdvance },
+    extensions: {
+      totalAdvance,
+      expensesBreakdown: {
+        cashP,
+        cashPCO,
+        diesel,
+        other,
+        otherRaw: otherValues,
+      },
+      challanDate,
+      challanNumber,
+      billNumber,
+      billDate,
+      marketPaymentDate,
+      bank,
+      account,
+      amount,
+      detailsText,
+    },
     partyType,
+    partyName,
   };
 }
 

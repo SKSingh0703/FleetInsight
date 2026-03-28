@@ -1,4 +1,114 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Space+Grotesk:wght@500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 220 25% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 10%;
+
+    --primary: 168 80% 32%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 18% 94%;
+    --secondary-foreground: 220 20% 20%;
+
+    --muted: 210 15% 93%;
+    --muted-foreground: 215 14% 50%;
+
+    --accent: 38 92% 55%;
+    --accent-foreground: 30 80% 12%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 20% 90%;
+    --input: 214 20% 90%;
+    --ring: 168 80% 32%;
+
+    --radius: 0.75rem;
+
+    --success: 152 60% 42%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 55%;
+    --warning-foreground: 30 80% 12%;
+
+    --sidebar-background: 220 25% 10%;
+    --sidebar-foreground: 210 15% 75%;
+    --sidebar-primary: 168 80% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 20% 16%;
+    --sidebar-accent-foreground: 210 15% 85%;
+    --sidebar-border: 220 20% 18%;
+    --sidebar-ring: 168 80% 45%;
+
+    --font-sans: 'DM Sans', system-ui, sans-serif;
+    --font-display: 'Space Grotesk', system-ui, sans-serif;
+  }
+
+  .dark {
+    --background: 220 25% 7%;
+    --foreground: 210 15% 93%;
+    --card: 220 25% 10%;
+    --card-foreground: 210 15% 93%;
+    --popover: 220 25% 10%;
+    --popover-foreground: 210 15% 93%;
+    --primary: 168 80% 45%;
+    --primary-foreground: 220 25% 7%;
+    --secondary: 220 20% 16%;
+    --secondary-foreground: 210 15% 85%;
+    --muted: 220 15% 15%;
+    --muted-foreground: 215 14% 55%;
+    --accent: 38 92% 55%;
+    --accent-foreground: 30 80% 12%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 220 15% 18%;
+    --input: 220 15% 18%;
+    --ring: 168 80% 45%;
+    --sidebar-background: 220 30% 5%;
+    --sidebar-foreground: 210 15% 75%;
+    --sidebar-primary: 168 80% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 25% 12%;
+    --sidebar-accent-foreground: 210 15% 85%;
+    --sidebar-border: 220 25% 12%;
+    --sidebar-ring: 168 80% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+  }
+}
+
+@layer components {
+  .stat-card {
+    @apply bg-card rounded-xl border p-5 shadow-sm transition-all duration-200 hover:shadow-md;
+  }
+  .search-bar-global {
+    @apply flex items-center gap-2 rounded-xl border bg-card px-4 py-2.5 shadow-sm transition-all duration-200 focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary/50;
+  }
+  .filter-chip {
+    @apply inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-sm font-medium text-primary;
+  }
+  .vehicle-card {
+    @apply bg-card rounded-xl border p-5 cursor-pointer transition-all duration-200 hover:border-primary/40 hover:shadow-md;
+  }
+}

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Upload, FileSpreadsheet, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
@@ -17,14 +17,58 @@ function getRawString(raw: Record<string, unknown>, keys: string[]): string {
   return "";
 }
 
+function formatUnknown(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function KeyValueTable({ data }: { data: Record<string, unknown> }) {
+  const rows = Object.entries(data || {});
+  rows.sort((a, b) => a[0].localeCompare(b[0]));
+
+  if (rows.length === 0) {
+    return <div className="text-xs text-muted-foreground">No raw data available</div>;
+  }
+
+  return (
+    <div className="overflow-auto rounded-md border">
+      <table className="w-full text-xs">
+        <thead className="bg-muted/30">
+          <tr className="text-muted-foreground">
+            <th className="px-3 py-2 text-left">Key</th>
+            <th className="px-3 py-2 text-left">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([k, v]) => (
+            <tr key={k} className="border-t">
+              <td className="px-3 py-2 whitespace-nowrap font-medium">{k}</td>
+              <td className="px-3 py-2 break-words">{formatUnknown(v) || "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function UploadPage() {
   const [state, setState] = useState<UploadState>("idle");
   const [progress, setProgress] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [fileName, setFileName] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [showRejected, setShowRejected] = useState(false);
   const [rejectedLimit, setRejectedLimit] = useState(50);
+
+  const processingTimerRef = useRef<number | null>(null);
 
   const mutation = useMutation({
     mutationFn: async (file: File) => {
@@ -32,20 +76,58 @@ export default function UploadPage() {
       setFileName(file.name);
       setState("uploading");
       setProgress(0);
+      setIsProcessing(false);
       return uploadFile(file, {
-        onProgress: (p) => setProgress(p),
+        onProgress: (p) => {
+          // Upload transport can hit 100% while backend is still processing.
+          // Keep progress below 100 until we receive the response.
+          const capped = Math.min(Math.max(p, 0), 100);
+          if (capped >= 100) {
+            setIsProcessing(true);
+            setProgress(90);
+            return;
+          }
+
+          setProgress(Math.min(capped, 90));
+        },
       });
     },
     onSuccess: () => {
+      setIsProcessing(false);
       setProgress(100);
       setState("success");
     },
     onError: (err) => {
+      setIsProcessing(false);
       setState("error");
       setProgress(0);
       setErrorMessage(err instanceof Error ? err.message : "Upload failed");
     },
   });
+
+  useEffect(() => {
+    if (processingTimerRef.current != null) {
+      window.clearInterval(processingTimerRef.current);
+      processingTimerRef.current = null;
+    }
+
+    if (state !== "uploading" || !isProcessing) return;
+
+    processingTimerRef.current = window.setInterval(() => {
+      setProgress((p) => {
+        if (p >= 99) return 99;
+        // Slow easing towards 99; keeps UI moving while backend works.
+        return Math.min(99, p + Math.max(0.25, (99 - p) * 0.03));
+      });
+    }, 250);
+
+    return () => {
+      if (processingTimerRef.current != null) {
+        window.clearInterval(processingTimerRef.current);
+        processingTimerRef.current = null;
+      }
+    };
+  }, [isProcessing, state]);
 
   const startUpload = useCallback(
     (file: File) => {
@@ -72,6 +154,7 @@ export default function UploadPage() {
   const reset = () => {
     setState("idle");
     setProgress(0);
+    setIsProcessing(false);
     setFileName("");
     setErrorMessage("");
     mutation.reset();
@@ -133,7 +216,9 @@ export default function UploadPage() {
                   transition={{ duration: 0.2 }}
                 />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">{Math.min(Math.round(progress), 100)}%</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {isProcessing ? "Processing…" : `${Math.min(Math.round(progress), 100)}%`}
+              </p>
             </div>
           </div>
         )}
@@ -220,7 +305,7 @@ export default function UploadPage() {
                           <th className="px-3 py-2 text-left">Invoice</th>
                           <th className="px-3 py-2 text-left">Chassis</th>
                           <th className="px-3 py-2 text-left">Issues</th>
-                          <th className="px-3 py-2 text-left">Raw preview</th>
+                          <th className="px-3 py-2 text-left">Details</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -230,29 +315,48 @@ export default function UploadPage() {
                           const invoice = getRawString(raw, ["INVOICE NO.", "INVOICE NO", "INV.NO", "INV.NO.", "INVOICE NUMBER"]);
                           const chassis = getRawString(raw, ["CH.NO.", "CHASSIS NO", "CHASSIS NO.", "CHASSIS NUMBER"]);
 
-                          const previewEntries = Object.entries(raw).slice(0, 4);
-                          const preview = previewEntries
-                            .map(([k, v]) => `${k}: ${String(v)}`)
-                            .join(" | ");
+                          const key = `${e.sheetName}-${e.rowNumber}`;
 
                           return (
-                            <tr key={`${e.sheetName}-${e.rowNumber}`} className="border-t">
-                              <td className="px-3 py-2 whitespace-nowrap">{e.sheetName}</td>
-                              <td className="px-3 py-2 whitespace-nowrap">{e.rowNumber}</td>
-                              <td className="px-3 py-2 whitespace-nowrap">{vehicle || "-"}</td>
-                              <td className="px-3 py-2 whitespace-nowrap">{invoice || e.invoiceNumber || "-"}</td>
-                              <td className="px-3 py-2 whitespace-nowrap">{chassis || "-"}</td>
-                              <td className="px-3 py-2">
-                                <div className="space-y-1">
-                                  {e.issues?.map((it, idx) => (
-                                    <div key={idx} className="text-xs">{it}</div>
-                                  ))}
-                                </div>
-                              </td>
-                              <td className="px-3 py-2 text-xs text-muted-foreground max-w-[420px] truncate" title={preview}>
-                                {preview || "-"}
-                              </td>
-                            </tr>
+                            <>
+                              <tr key={key} className="border-t align-top">
+                                <td className="px-3 py-2 whitespace-nowrap">{e.sheetName}</td>
+                                <td className="px-3 py-2 whitespace-nowrap">{e.rowNumber}</td>
+                                <td className="px-3 py-2 whitespace-nowrap">{vehicle || "-"}</td>
+                                <td className="px-3 py-2 whitespace-nowrap">{invoice || e.invoiceNumber || "-"}</td>
+                                <td className="px-3 py-2 whitespace-nowrap">{chassis || "-"}</td>
+                                <td className="px-3 py-2">
+                                  <div className="space-y-1">
+                                    {e.issues?.map((it, idx) => (
+                                      <div key={idx} className="text-xs">{it}</div>
+                                    ))}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <details>
+                                    <summary className="cursor-pointer text-xs text-primary select-none">View full row</summary>
+                                    <div className="mt-3 space-y-3">
+                                      <div>
+                                        <div className="text-xs font-medium text-muted-foreground mb-2">All values</div>
+                                        <KeyValueTable data={raw} />
+                                      </div>
+                                      {Array.isArray(e.issues) && e.issues.length > 0 && (
+                                        <div>
+                                          <div className="text-xs font-medium text-muted-foreground mb-2">Rejection reasons</div>
+                                          <div className="rounded-md border bg-muted/20 p-3">
+                                            <div className="space-y-1">
+                                              {e.issues.map((it, idx) => (
+                                                <div key={idx} className="text-xs">{it}</div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </details>
+                                </td>
+                              </tr>
+                            </>
                           );
                         })}
                       </tbody>

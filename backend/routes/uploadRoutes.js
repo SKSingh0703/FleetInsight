@@ -5,6 +5,7 @@ import crypto from "crypto";
 import multer from "multer";
 
 import { upload } from "../controllers/uploadController.js";
+import { verifyToken, requireApproved } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -40,7 +41,7 @@ const uploadMiddleware = multer({
 });
 
 // MVP skeleton: upload endpoint will parse/process Excel later.
-router.post("/upload", uploadMiddleware.single("file"), upload);
+router.post("/upload", verifyToken, requireApproved, uploadMiddleware.single("file"), upload);
 
 export default router;
 

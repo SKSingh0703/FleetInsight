@@ -14,7 +14,7 @@ const locationSchema = new Schema(
 
 const movementSchema = new Schema(
   {
-    date: { type: Date, required: true, index: true },
+    date: { type: Date, index: true },
     location: { type: locationSchema, required: true },
     weightTons: { type: Number, required: true, min: 0 },
   },
@@ -37,7 +37,7 @@ const tripSchema = new mongoose.Schema(
     tripKey: { type: String, required: true, unique: true, index: true, trim: true },
     invoiceNumber: { type: String, index: true, trim: true },
     chassisNumber: { type: String, required: true, index: true, trim: true },
-    vehicleNumber: { type: String, required: true, index: true, trim: true },
+    vehicleNumber: { type: String, index: true, trim: true },
     vehicleSuffix: { type: String, index: true, trim: true },
 
     // OWN vs MARKET (MARKET typically has a book number)

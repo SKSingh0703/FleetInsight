@@ -81,10 +81,16 @@ export async function processRows(rawRows) {
 
       const rowIssues = [];
 
-      if (!vehicleNumber) rowIssues.push("Missing vehicleNumber");
+      const hasVehicleNumber = Boolean(vehicleNumber);
+      const hasLoadingDate = isValidDate(loadingDate);
 
-      // Required fields (as per relaxed rules)
-      if (!isValidDate(loadingDate)) rowIssues.push("Invalid or missing loading date");
+      // vehicleNumber and loadingDate are individually optional.
+      // Reject only if both are missing (so we still preserve most entries).
+      if (!hasVehicleNumber && !hasLoadingDate) {
+        rowIssues.push("Missing both vehicleNumber and loading date");
+      }
+
+      // Required fields
       if (!isFiniteNonNegative(loadingWeightTons)) rowIssues.push("Invalid loading weight");
 
       const unloadingWeightAssumed =
@@ -105,20 +111,38 @@ export async function processRows(rawRows) {
       const totalFreight = computeTotalFreight({ unloadingWeightTons, ratePerTon });
       if (!Number.isFinite(totalFreight)) rowIssues.push("Failed to compute totalFreight");
 
-      const tripKeyPayload = {
-        vehicleNumber,
-        chassisNumber,
-        tripType: finalTripType,
-        partyType: effectivePartyType,
-        bookNumber: finalTripType === "MARKET" ? bookNumber : "",
-        loadingDate: isValidDate(loadingDate) ? loadingDate.toISOString().slice(0, 10) : "",
-        unloadingDate: isValidDate(effectiveUnloadingDate) ? effectiveUnloadingDate.toISOString().slice(0, 10) : "",
-        loadingPoint,
-        unloadingPoint,
-        loadingWeightTons,
-        unloadingWeightTons,
-        ratePerTon,
-      };
+      const rawFingerprint = crypto
+        .createHash("sha256")
+        .update(JSON.stringify(raw || {}))
+        .digest("hex");
+
+      // Use the strong/dedup-friendly key only when we have both: vehicleNumber + loadingDate.
+      // Otherwise, fall back to a fingerprinted key to avoid collisions and accidental dedup.
+      const tripKeyPayload = hasVehicleNumber && hasLoadingDate
+        ? {
+            vehicleNumber,
+            chassisNumber,
+            tripType: finalTripType,
+            partyType: effectivePartyType,
+            bookNumber: finalTripType === "MARKET" ? bookNumber : "",
+            loadingDate: loadingDate.toISOString().slice(0, 10),
+            unloadingDate: isValidDate(effectiveUnloadingDate)
+              ? effectiveUnloadingDate.toISOString().slice(0, 10)
+              : "",
+            loadingPoint,
+            unloadingPoint,
+            loadingWeightTons,
+            unloadingWeightTons,
+            ratePerTon,
+          }
+        : {
+            legacy: true,
+            invoiceNumber,
+            chassisNumber,
+            sheetName,
+            rowNumber,
+            rawFingerprint,
+          };
       const tripKey = crypto
         .createHash("sha256")
         .update(JSON.stringify(tripKeyPayload))

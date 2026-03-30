@@ -1,6 +1,7 @@
-import { LayoutDashboard, Search, Upload, Truck } from "lucide-react";
+import { LayoutDashboard, Search, Upload, Truck, Shield, LogOut } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "@/auth/AuthContext";
 import {
   Sidebar,
   SidebarContent,
@@ -9,19 +10,35 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarSeparator,
+  SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter as ConfirmFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 const items = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Search", url: "/search", icon: Search },
   { title: "Upload", url: "/upload", icon: Upload },
+  { title: "Admin", url: "/admin", icon: Shield },
 ];
 
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
 
   return (
     <Sidebar collapsible="icon">
@@ -58,6 +75,43 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {user && (
+          <SidebarFooter className="mt-auto">
+            <SidebarSeparator />
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <SidebarMenuButton>
+                      <LogOut className="mr-2 h-4 w-4" />
+                      {!collapsed && <span>Logout</span>}
+                    </SidebarMenuButton>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Logout?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Are you sure you want to log out from FleetInsight?
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <ConfirmFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => {
+                          logout();
+                          navigate("/login", { replace: true });
+                        }}
+                      >
+                        Logout
+                      </AlertDialogAction>
+                    </ConfirmFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarFooter>
+        )}
       </SidebarContent>
     </Sidebar>
   );

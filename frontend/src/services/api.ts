@@ -106,6 +106,56 @@ export type UploadResponse = {
   }>;
 };
 
+export type SheetIntegration = {
+  _id?: string;
+  enabled: boolean;
+  spreadsheetId: string;
+  autoDiscoverTabs?: boolean;
+  defaultRange?: string;
+  defaultHeaderRow?: number;
+  syncIntervalSeconds?: number;
+  tabs?: Array<{ tabName: string; range?: string; headerRow?: number }>;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type SheetTabSyncState = {
+  _id?: string;
+  spreadsheetId: string;
+  tabName: string;
+  lastRunAt?: string;
+  lastError?: string;
+  lastStats?: {
+    processed?: number;
+    changed?: number;
+    skippedEmpty?: number;
+    skippedIncomplete?: number;
+    rejected?: number;
+    upsertRequested?: number;
+    upsertMatched?: number;
+    upsertModified?: number;
+    upsertUpserted?: number;
+  };
+};
+
+export type SheetSyncRun = {
+  _id?: string;
+  spreadsheetId: string;
+  startedAt: string;
+  finishedAt?: string;
+  status: "RUNNING" | "SUCCESS" | "FAILED" | "SKIPPED";
+  message?: string;
+  results?: Array<{
+    tabName: string;
+    processed: number;
+    changed: number;
+    skippedEmpty: number;
+    skippedIncomplete: number;
+    rejected: number;
+    upsert: { requested: number; matched: number; modified: number; upserted: number };
+  }>;
+};
+
 export type UiTrip = {
   id: string;
   tripKey: string;
@@ -145,7 +195,40 @@ export type VehicleSummary = {
   profit: number;
 };
 
+export type AuthUser = {
+  id: string;
+  name?: string;
+  email: string;
+  role: "ADMIN" | "USER";
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  createdAt?: string;
+};
+
+export type AuthResponse = {
+  token: string;
+  user: AuthUser;
+};
+
 const DEFAULT_BASE_URL = "http://localhost:5000";
+
+const AUTH_TOKEN_KEY = "fleetinsight_token";
+
+export function getAuthToken() {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setAuthToken(token: string) {
+  try {
+    if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+    else localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 function getBaseUrl() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -154,10 +237,12 @@ function getBaseUrl() {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getAuthToken();
   const res = await fetch(`${getBaseUrl()}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers || {}),
     },
   });
@@ -278,6 +363,11 @@ export function uploadFile(
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${getBaseUrl()}/api/upload`);
 
+    const token = getAuthToken();
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
+
     xhr.upload.onprogress = (evt) => {
       if (!opts?.onProgress) return;
       if (!evt.lengthComputable) return;
@@ -310,4 +400,91 @@ export function uploadFile(
 
     xhr.send(form);
   });
+}
+
+export function postAuthGoogle(credential: string): Promise<AuthResponse> {
+  return requestJson<AuthResponse>("/api/auth/google", {
+    method: "POST",
+    body: JSON.stringify({ credential }),
+  });
+}
+
+export function getMe(): Promise<{ user: AuthUser }> {
+  return requestJson<{ user: AuthUser }>("/api/auth/me", { method: "GET" });
+}
+
+export function adminListUsers(): Promise<{ users: AuthUser[] }> {
+  return requestJson<{ users: AuthUser[] }>("/api/admin/users", { method: "GET" });
+}
+
+export function adminListPending(): Promise<{ users: AuthUser[] }> {
+  return requestJson<{ users: AuthUser[] }>("/api/admin/pending", { method: "GET" });
+}
+
+export function adminApproveUser(userId: string): Promise<{ user: AuthUser }> {
+  return requestJson<{ user: AuthUser }>(`/api/admin/approve/${encodeURIComponent(userId)}`, {
+    method: "POST",
+  });
+}
+
+export function adminRejectUser(userId: string): Promise<{ user: AuthUser }> {
+  return requestJson<{ user: AuthUser }>(`/api/admin/reject/${encodeURIComponent(userId)}`, {
+    method: "POST",
+  });
+}
+
+export function adminMakeAdmin(userId: string): Promise<{ user: AuthUser }> {
+  return requestJson<{ user: AuthUser }>(`/api/admin/make-admin/${encodeURIComponent(userId)}`, {
+    method: "POST",
+  });
+}
+
+export function adminRemoveUser(userId: string): Promise<{ removed: boolean }> {
+  return requestJson<{ removed: boolean }>(`/api/admin/remove/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function adminGetSheetSyncStatus(): Promise<{
+  integration: SheetIntegration | null;
+  states: SheetTabSyncState[];
+  runs: SheetSyncRun[];
+}> {
+  return requestJson<{ integration: SheetIntegration | null; states: SheetTabSyncState[]; runs: SheetSyncRun[] }>(
+    "/api/admin/sheetsync",
+    { method: "GET" }
+  );
+}
+
+export function adminSuggestSheetSyncTabs(spreadsheetId: string): Promise<{
+  tabs: string[];
+  suggested: { current: string | null; previous: string | null; meta?: unknown };
+}> {
+  return requestJson<{ tabs: string[]; suggested: { current: string | null; previous: string | null; meta?: unknown } }>(
+    `/api/admin/sheetsync/suggest?spreadsheetId=${encodeURIComponent(spreadsheetId)}`,
+    { method: "GET" }
+  );
+}
+
+export function adminUpsertSheetSyncConfig(payload: {
+  enabled: boolean;
+  spreadsheetId: string;
+  autoDiscoverTabs: boolean;
+  syncIntervalSeconds: number;
+  defaultRange: string;
+  defaultHeaderRow: number;
+  tabs: Array<{ tabName: string; range?: string; headerRow?: number }>;
+}): Promise<{ integration: SheetIntegration }> {
+  return requestJson<{ integration: SheetIntegration }>("/api/admin/sheetsync/config", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function adminRunSheetSyncNow(): Promise<{ result: unknown }> {
+  return requestJson<{ result: unknown }>("/api/admin/sheetsync/run", { method: "POST" });
+}
+
+export function adminListSheetSyncRuns(): Promise<{ runs: SheetSyncRun[] }> {
+  return requestJson<{ runs: SheetSyncRun[] }>("/api/admin/sheetsync/runs", { method: "GET" });
 }

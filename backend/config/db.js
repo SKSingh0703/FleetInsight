@@ -99,7 +99,16 @@ export async function connectDB() {
   // Mongoose defaults are fine for MVP; keep this as a single place to tweak later.
   mongoose.set("strictQuery", true);
   await mongoose.connect(MONGO_URI);
-  await backfillTripKeys();
+
+  const shouldBackfill = String(process.env.BACKFILL_TRIPKEYS || "").toLowerCase() === "true";
+  if (shouldBackfill) {
+    const missingCount = await Trip.countDocuments({
+      $or: [{ tripKey: { $exists: false } }, { tripKey: null }, { tripKey: "" }],
+    });
+    if (missingCount > 0) {
+      await backfillTripKeys();
+    }
+  }
   await Trip.syncIndexes();
   return mongoose.connection;
 }

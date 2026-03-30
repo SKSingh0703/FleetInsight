@@ -120,6 +120,20 @@ function toDate(value) {
 }
 
 export const COLUMN_ALIASES = {
+  sno: [
+    "S.NO.",
+    "S.NO",
+    "S. NO.",
+    "S. NO",
+    "S NO",
+    "SNO",
+    "SR NO",
+    "SR. NO.",
+    "SR.NO",
+    "SERIAL NO",
+    "SERIAL NO.",
+    "SERIAL NUMBER",
+  ],
   invoiceNumber: [
     "INVOICE NO.",
     "INVOICE NO",

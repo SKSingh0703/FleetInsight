@@ -9,6 +9,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const hideGlobalSearch = location.pathname === "/search";
+  const isAuthScreen = location.pathname === "/login" || location.pathname === "/pending";
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,6 +17,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       navigate(`/search?q=${encodeURIComponent(query.trim())}`);
     }
   };
+
+  if (isAuthScreen) {
+    return <div className="min-h-screen">{children}</div>;
+  }
 
   return (
     <SidebarProvider>

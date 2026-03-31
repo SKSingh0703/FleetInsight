@@ -243,7 +243,22 @@ export function setAuthToken(token: string) {
 function getBaseUrl() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fromEnv = (import.meta as any)?.env?.VITE_API_URL;
-  return typeof fromEnv === "string" && fromEnv.trim() ? fromEnv.trim() : DEFAULT_BASE_URL;
+  const host = typeof window !== "undefined" ? window.location.hostname : "";
+
+  const g = globalThis as unknown as { __fleetinsight_baseurl_logged?: boolean };
+
+  if (!g.__fleetinsight_baseurl_logged) {
+    g.__fleetinsight_baseurl_logged = true;
+    console.log("[fleetinsight] api baseUrl debug", {
+      VITE_API_URL: fromEnv,
+      hostname: host,
+    });
+  }
+
+  if (typeof fromEnv === "string" && fromEnv.trim()) return fromEnv.trim();
+
+  const isLocalHost = host === "localhost" || host === "127.0.0.1";
+  return isLocalHost ? DEFAULT_BASE_URL : "";
 }
 
 export class ApiError extends Error {

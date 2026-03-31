@@ -61,8 +61,6 @@ Required:
 
 - `MONGO_URI`
   - Mongo connection string
-  - Example (Atlas): `mongodb+srv://USER:PASSWORD@cluster0.xxx.mongodb.net/fleetinsight?retryWrites=true&w=majority`
-- `JWT_SECRET`
   - Secret used to sign your backend-issued JWT
 - `GOOGLE_CLIENT_ID`
   - Google OAuth client ID (used to verify Google login tokens on the backend)

@@ -2,13 +2,55 @@ import createApp from "./app.js";
 import { PORT, NODE_ENV } from "./config/env.js";
 import { connectDB } from "./config/db.js";
 import { startSheetSyncScheduler } from "./services/sheetSyncScheduler.js";
+import { markStaleSheetSyncRuns } from "./services/sheetSyncService.js";
+import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const uploadDir = path.join(__dirname, "uploads");
+
+async function ensureUploadDirAndCleanup() {
+  try {
+    await fs.mkdir(uploadDir, { recursive: true });
+  } catch {
+    return;
+  }
+
+  try {
+    const entries = await fs.readdir(uploadDir);
+    await Promise.all(
+      entries.map(async (name) => {
+        const p = path.join(uploadDir, name);
+        try {
+          const st = await fs.stat(p);
+          if (!st.isFile()) return;
+          await fs.unlink(p);
+        } catch {
+          // ignore
+        }
+      })
+    );
+  } catch {
+    // ignore
+  }
+}
 
 async function start() {
   const app = createApp();
 
+  await ensureUploadDirAndCleanup();
+
   await connectDB();
   // eslint-disable-next-line no-console
   console.log(`[server] MongoDB connected (${NODE_ENV})`);
+
+  try {
+    await markStaleSheetSyncRuns();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[sheetSync] Failed to mark stale runs:", err);
+  }
 
   try {
     await startSheetSyncScheduler();

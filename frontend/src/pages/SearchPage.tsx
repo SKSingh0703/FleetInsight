@@ -100,8 +100,11 @@ export default function SearchPage() {
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["search", apiFilters],
-    queryFn: () => postSearch(apiFilters),
+    queryFn: ({ signal }) => postSearch(apiFilters, signal),
     enabled: hasCriteria,
+    placeholderData: (prev) => prev,
+    retry: 3,
+    retryDelay: 800,
   });
 
   const uiTrips = useMemo(() => (data?.trips || []).map(toUiTrip), [data?.trips]);

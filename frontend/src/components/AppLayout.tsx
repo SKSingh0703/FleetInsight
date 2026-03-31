@@ -3,11 +3,15 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Search } from "lucide-react";
 import { useState } from "react";
+import { useAuth } from "@/auth/AuthContext";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, online, authError, refresh } = useAuth();
   const hideGlobalSearch = location.pathname === "/search";
   const isAuthScreen = location.pathname === "/login" || location.pathname === "/pending";
 
@@ -50,6 +54,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             )}
           </header>
           <main className="flex-1 overflow-auto p-4 md:p-6">
+            {!!user && (!online || authError === "NETWORK") && (
+              <div className="mb-4">
+                <Alert variant="destructive">
+                  <AlertTitle>You're offline</AlertTitle>
+                  <AlertDescription>
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div>Some features may not work until the connection is restored.</div>
+                      <Button variant="secondary" size="sm" onClick={() => void refresh()}>
+                        Retry
+                      </Button>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              </div>
+            )}
             {children}
           </main>
         </div>

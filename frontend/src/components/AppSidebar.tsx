@@ -1,6 +1,6 @@
 import { LayoutDashboard, Search, Upload, Truck, Shield, LogOut } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import {
   Sidebar,
@@ -36,9 +36,13 @@ const items = [
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
-  const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+
+  const visibleItems = items.filter((item) => {
+    if (item.url !== "/admin") return true;
+    return user?.role === "ADMIN";
+  });
 
   return (
     <Sidebar collapsible="icon">
@@ -57,7 +61,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => (
+              {visibleItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild>
                     <NavLink

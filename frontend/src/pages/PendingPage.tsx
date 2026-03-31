@@ -1,10 +1,17 @@
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/auth/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { useEffect } from "react";
 
 export default function PendingPage() {
   const { user, logout, refresh } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user?.status === "APPROVED") {
+      navigate("/", { replace: true });
+    }
+  }, [user?.status, navigate]);
 
   return (
     <div className="min-h-[calc(100vh-64px)] flex items-center justify-center">

@@ -5,11 +5,56 @@ import { SheetSyncRun } from "../models/sheetSyncRunModel.js";
 import { fetchSheetValues } from "./googleSheetsService.js";
 import { processRows } from "./processingService.js";
 import { saveTrips } from "./tripStorageService.js";
+import { clearDashboardCache } from "./dashboardCacheService.js";
 import { COLUMN_ALIASES, normalizeHeaderKey } from "./mappingService.js";
 import {
   listSpreadsheetTabs,
   suggestCurrentAndPreviousTabs,
 } from "./sheetTabDiscoveryService.js";
+
+function getMaxRunHistory() {
+  const raw = process.env.SHEETS_SYNC_RUNS_MAX;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  return 200;
+}
+
+async function pruneOldRuns({ spreadsheetId }) {
+  const keep = getMaxRunHistory();
+  if (!spreadsheetId || keep <= 0) return;
+
+  const old = await SheetSyncRun.find({ spreadsheetId })
+    .sort({ startedAt: -1 })
+    .skip(keep)
+    .select({ _id: 1 })
+    .lean();
+  if (old.length === 0) return;
+
+  await SheetSyncRun.deleteMany({ _id: { $in: old.map((d) => d._id) } });
+}
+
+function getStaleRunMinutes() {
+  const raw = process.env.SHEETS_SYNC_RUN_STALE_MINUTES;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  return 30;
+}
+
+export async function markStaleSheetSyncRuns() {
+  const minutes = getStaleRunMinutes();
+  const cutoff = new Date(Date.now() - minutes * 60 * 1000);
+
+  await SheetSyncRun.updateMany(
+    { status: "RUNNING", startedAt: { $lt: cutoff } },
+    {
+      $set: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        message: "Marked failed after server restart (stale RUNNING run)",
+      },
+    }
+  );
+}
 
 function safeString(v) {
   if (v == null) return "";
@@ -129,7 +174,8 @@ export async function runSheetSyncOnce() {
         { _id: run._id },
         { $set: { status: "SKIPPED", finishedAt: new Date(), message: "No tabs resolved" } }
       );
-      return { ran: false, reason: "no_tabs" };
+      await pruneOldRuns({ spreadsheetId });
+      return { ran: true, results: [] };
     }
 
     const results = [];
@@ -191,6 +237,10 @@ export async function runSheetSyncOnce() {
         upsertStats = await saveTrips(trips);
       }
 
+      if ((upsertStats?.modified || 0) > 0 || (upsertStats?.upserted || 0) > 0) {
+        clearDashboardCache();
+      }
+
       await SheetTabSyncState.updateOne(
         { spreadsheetId, tabName },
         {
@@ -236,6 +286,8 @@ export async function runSheetSyncOnce() {
       }
     );
 
+    await pruneOldRuns({ spreadsheetId });
+
     return { ran: true, results };
   } catch (err) {
     const message = typeof err?.message === "string" ? err.message : "Sheet sync failed";
@@ -243,6 +295,7 @@ export async function runSheetSyncOnce() {
       { _id: run._id },
       { $set: { status: "FAILED", finishedAt: new Date(), message } }
     );
+    await pruneOldRuns({ spreadsheetId });
     throw err;
   }
 }

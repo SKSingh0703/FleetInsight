@@ -9,6 +9,7 @@ import {
   adminRunSheetSyncNow,
   adminSuggestSheetSyncTabs,
   adminUpsertSheetSyncConfig,
+  ApiError,
 } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/auth/AuthContext";
@@ -42,6 +43,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useEffect, useMemo, useState } from "react";
 
 export default function AdminPage() {
@@ -61,11 +63,17 @@ export default function AdminPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["adminUsers"],
     queryFn: adminListUsers,
+    placeholderData: (prev) => prev,
+    retry: 2,
+    retryDelay: 800,
   });
 
   const sheetStatus = useQuery({
     queryKey: ["sheetSyncStatus"],
     queryFn: adminGetSheetSyncStatus,
+    placeholderData: (prev) => prev,
+    retry: 2,
+    retryDelay: 800,
   });
 
   const suggestionsEnabled = sheetAutoDiscover && sheetSpreadsheetId.trim().length > 0;
@@ -73,6 +81,9 @@ export default function AdminPage() {
     queryKey: ["sheetSyncSuggest", sheetSpreadsheetId],
     queryFn: () => adminSuggestSheetSyncTabs(sheetSpreadsheetId.trim()),
     enabled: suggestionsEnabled,
+    placeholderData: (prev) => prev,
+    retry: 1,
+    retryDelay: 800,
   });
 
   const approve = useMutation({
@@ -119,7 +130,10 @@ export default function AdminPage() {
 
   const runSheetSync = useMutation({
     mutationFn: adminRunSheetSyncNow,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sheetSyncStatus"] }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["sheetSyncStatus"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
   });
 
   useEffect(() => {
@@ -152,12 +166,46 @@ export default function AdminPage() {
     return list.length > 0 ? list.join(" • ") : "No tabs suggested";
   }, [manualTabCurrent, manualTabPrevious, sheetAutoDiscover, sheetSuggestions.data?.suggested]);
 
+  const anyNetworkError =
+    (error instanceof ApiError && error.isNetworkError) ||
+    (sheetStatus.error instanceof ApiError && sheetStatus.error.isNetworkError);
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div>
         <h1 className="text-2xl font-display font-bold tracking-tight">Admin Panel</h1>
         <p className="text-sm text-muted-foreground mt-1">Approve users and manage access.</p>
       </div>
+
+      {(error || sheetStatus.error) && (
+        <Alert variant="destructive">
+          <AlertTitle>{anyNetworkError ? "Server unreachable" : "Something went wrong"}</AlertTitle>
+          <AlertDescription>
+            <div className="space-y-2">
+              <div>
+                {anyNetworkError
+                  ? "Unable to reach the backend. Check your connection or restart the backend server."
+                  : error instanceof Error
+                    ? error.message
+                    : sheetStatus.error instanceof Error
+                      ? sheetStatus.error.message
+                      : "Request failed"}
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  qc.invalidateQueries({ queryKey: ["adminUsers"] });
+                  qc.invalidateQueries({ queryKey: ["sheetSyncStatus"] });
+                  qc.invalidateQueries({ queryKey: ["sheetSyncSuggest"] });
+                }}
+              >
+                Retry
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Tabs defaultValue="users">
         <TabsList>

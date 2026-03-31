@@ -1,6 +1,15 @@
 import { google } from "googleapis";
 
 function readServiceAccountJson() {
+  const envEmail = process.env.GOOGLE_SHEETS_CLIENT_EMAIL;
+  const envKey = process.env.GOOGLE_SHEETS_PRIVATE_KEY;
+  if (typeof envEmail === "string" && envEmail.trim() && typeof envKey === "string" && envKey.trim()) {
+    return {
+      client_email: envEmail.trim(),
+      private_key: envKey.includes("\\n") ? envKey.replace(/\\n/g, "\n") : envKey,
+    };
+  }
+
   const b64 = process.env.GOOGLE_SHEETS_SA_JSON_BASE64;
   const raw = process.env.GOOGLE_SHEETS_SA_JSON;
 
@@ -13,7 +22,9 @@ function readServiceAccountJson() {
   })();
 
   if (!jsonText) {
-    throw new Error("Missing GOOGLE_SHEETS_SA_JSON_BASE64 or GOOGLE_SHEETS_SA_JSON");
+    throw new Error(
+      "Missing GOOGLE_SHEETS_CLIENT_EMAIL/GOOGLE_SHEETS_PRIVATE_KEY or GOOGLE_SHEETS_SA_JSON_BASE64/GOOGLE_SHEETS_SA_JSON"
+    );
   }
 
   const parsed = JSON.parse(jsonText);

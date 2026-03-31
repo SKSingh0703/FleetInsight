@@ -1,9 +1,11 @@
 import { GoogleLogin } from "@react-oauth/google";
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { postAuthGoogle } from "@/services/api";
+import { ApiError, postAuthGoogle } from "@/services/api";
 import { useAuth } from "@/auth/AuthContext";
-import { ShieldCheck, Truck, Search, Upload } from "lucide-react";
+import { ShieldCheck, Truck, Search, Upload, WifiOff } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -21,6 +23,14 @@ export default function LoginPage() {
       }
     },
   });
+
+  const networkError = (() => {
+    if (!mutation.isError) return false;
+    const err = mutation.error;
+    if (err instanceof ApiError && err.isNetworkError) return true;
+    if (err instanceof Error && err.message === "Failed to fetch") return true;
+    return false;
+  })();
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/40 flex items-center">
@@ -97,9 +107,33 @@ export default function LoginPage() {
                 {mutation.isPending && <p className="text-sm text-muted-foreground">Signing you in…</p>}
 
                 {mutation.isError && (
-                  <p className="text-sm text-destructive">
-                    {mutation.error instanceof Error ? mutation.error.message : "Login failed"}
-                  </p>
+                  <div>
+                    {networkError ? (
+                      <Alert variant="destructive">
+                        <div className="flex items-start gap-3">
+                          <WifiOff className="h-4 w-4 mt-0.5" />
+                          <div className="space-y-1">
+                            <AlertTitle>Can’t reach the server</AlertTitle>
+                            <AlertDescription>
+                              We can’t connect right now. Please check your internet connection and try again.
+                            </AlertDescription>
+                            <div className="pt-2">
+                              <Button variant="secondary" onClick={() => window.location.reload()}>
+                                Retry
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </Alert>
+                    ) : (
+                      <Alert variant="destructive">
+                        <AlertTitle>Sign-in failed</AlertTitle>
+                        <AlertDescription>
+                          {mutation.error instanceof Error ? mutation.error.message : "Login failed"}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
                 )}
 
                 <p className="text-xs text-muted-foreground">

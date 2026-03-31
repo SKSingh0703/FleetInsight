@@ -116,33 +116,41 @@ export async function processRows(rawRows) {
         .update(JSON.stringify(raw || {}))
         .digest("hex");
 
-      // Use the strong/dedup-friendly key only when we have both: vehicleNumber + loadingDate.
-      // Otherwise, fall back to a fingerprinted key to avoid collisions and accidental dedup.
-      const tripKeyPayload = hasVehicleNumber && hasLoadingDate
+      // Identity strategy:
+      // - If invoiceNumber is present, treat it as the primary identity so edits (vehicle/date/etc) update the same trip.
+      // - Otherwise, use a stronger composite key only when we have both: vehicleNumber + loadingDate.
+      // - Otherwise, fall back to a fingerprinted key to avoid collisions and accidental dedup.
+      const tripKeyPayload = invoiceNumber
         ? {
-            vehicleNumber,
-            chassisNumber,
-            tripType: finalTripType,
-            partyType: effectivePartyType,
-            bookNumber: finalTripType === "MARKET" ? bookNumber : "",
-            loadingDate: loadingDate.toISOString().slice(0, 10),
-            unloadingDate: isValidDate(effectiveUnloadingDate)
-              ? effectiveUnloadingDate.toISOString().slice(0, 10)
-              : "",
-            loadingPoint,
-            unloadingPoint,
-            loadingWeightTons,
-            unloadingWeightTons,
-            ratePerTon,
-          }
-        : {
-            legacy: true,
+            v: 2,
             invoiceNumber,
-            chassisNumber,
-            sheetName,
-            rowNumber,
-            rawFingerprint,
-          };
+          }
+        : hasVehicleNumber && hasLoadingDate
+          ? {
+              v: 2,
+              vehicleNumber,
+              chassisNumber,
+              tripType: finalTripType,
+              partyType: effectivePartyType,
+              bookNumber: finalTripType === "MARKET" ? bookNumber : "",
+              loadingDate: loadingDate.toISOString().slice(0, 10),
+              unloadingDate: isValidDate(effectiveUnloadingDate)
+                ? effectiveUnloadingDate.toISOString().slice(0, 10)
+                : "",
+              loadingPoint,
+              unloadingPoint,
+              loadingWeightTons,
+              unloadingWeightTons,
+              ratePerTon,
+            }
+          : {
+              v: 2,
+              legacy: true,
+              chassisNumber,
+              sheetName,
+              rowNumber,
+              rawFingerprint,
+            };
       const tripKey = crypto
         .createHash("sha256")
         .update(JSON.stringify(tripKeyPayload))

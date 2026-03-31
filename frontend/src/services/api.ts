@@ -213,6 +213,16 @@ const DEFAULT_BASE_URL = "http://localhost:5000";
 
 const AUTH_TOKEN_KEY = "fleetinsight_token";
 
+export const AUTH_EXPIRED_EVENT = "fleetinsight:auth-expired";
+
+function emitAuthExpired() {
+  try {
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+  } catch {
+    // ignore
+  }
+}
+
 export function getAuthToken() {
   try {
     return localStorage.getItem(AUTH_TOKEN_KEY) || "";
@@ -236,20 +246,46 @@ function getBaseUrl() {
   return typeof fromEnv === "string" && fromEnv.trim() ? fromEnv.trim() : DEFAULT_BASE_URL;
 }
 
+export class ApiError extends Error {
+  status?: number;
+  bodyText?: string;
+  isNetworkError?: boolean;
+
+  constructor(message: string, opts?: { status?: number; bodyText?: string; isNetworkError?: boolean }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = opts?.status;
+    this.bodyText = opts?.bodyText;
+    this.isNetworkError = opts?.isNetworkError;
+  }
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getAuthToken();
-  const res = await fetch(`${getBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers || {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${getBaseUrl()}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.headers || {}),
+      },
+    });
+  } catch (err) {
+    const msg = typeof err?.message === "string" ? err.message : "Network error";
+    throw new ApiError(msg || "Network error", { isNetworkError: true });
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `Request failed: ${res.status}`);
+    if (res.status === 401) {
+      setAuthToken("");
+      emitAuthExpired();
+      throw new ApiError("Session expired. Please sign in again.", { status: 401, bodyText: text });
+    }
+    const message = text || `Request failed: ${res.status}`;
+    throw new ApiError(message, { status: res.status, bodyText: text });
   }
 
   return res.json() as Promise<T>;
@@ -341,15 +377,31 @@ export function buildVehicleSummaries(trips: UiTrip[]): VehicleSummary[] {
   return Array.from(map.values());
 }
 
-export function postSearch(filters: SearchFilters): Promise<SearchResponse> {
+export function postSearch(filters: SearchFilters, signal?: AbortSignal): Promise<SearchResponse> {
   return requestJson<SearchResponse>("/api/search", {
     method: "POST",
     body: JSON.stringify(filters || {}),
+    ...(signal ? { signal } : {}),
   });
 }
 
-export function getDashboard() {
-  return requestJson<{ summary: Summary; trips: ApiTrip[] }>("/api/dashboard", { method: "GET" });
+export function getDashboard(
+  opts?: { month?: number; year?: number; limit?: number; signal?: AbortSignal }
+): Promise<{ summary: Summary; trips: ApiTrip[] }> {
+  const month = typeof opts?.month === "number" ? opts.month : undefined;
+  const year = typeof opts?.year === "number" ? opts.year : undefined;
+  const limit = typeof opts?.limit === "number" ? opts.limit : undefined;
+
+  const qs = new URLSearchParams();
+  if (typeof month === "number") qs.set("month", String(month));
+  if (typeof year === "number") qs.set("year", String(year));
+  if (typeof limit === "number") qs.set("limit", String(limit));
+
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return requestJson<{ summary: Summary; trips: ApiTrip[] }>(`/api/dashboard${suffix}`, {
+    method: "GET",
+    ...(opts?.signal ? { signal: opts.signal } : {}),
+  });
 }
 
 export function uploadFile(
@@ -373,6 +425,14 @@ export function uploadFile(
       if (!evt.lengthComputable) return;
       const percent = Math.round((evt.loaded / evt.total) * 100);
       opts.onProgress(percent);
+    };
+
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState !== XMLHttpRequest.DONE) return;
+      if (xhr.status === 401) {
+        setAuthToken("");
+        emitAuthExpired();
+      }
     };
 
     xhr.onload = () => {

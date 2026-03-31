@@ -8,7 +8,7 @@ function ownerId() {
 
 const OWNER = ownerId();
 
-export async function withMongoLock({ key, ttlMs }, fn) {
+export async function withMongoLock({ key, ttlMs, autoRenewIntervalMs }, fn) {
   const now = new Date();
   const lockedUntil = new Date(now.getTime() + ttlMs);
 
@@ -42,10 +42,25 @@ export async function withMongoLock({ key, ttlMs }, fn) {
     return { ran: false };
   }
 
+  const renewEveryMs = Number(autoRenewIntervalMs);
+  const shouldRenew = Number.isFinite(renewEveryMs) && renewEveryMs > 0;
+  let renewTimer = null;
+
   try {
+    if (shouldRenew) {
+      renewTimer = setInterval(() => {
+        const newLockedUntil = new Date(Date.now() + ttlMs);
+        void DistributedLock.updateOne(
+          { key, owner: OWNER },
+          { $set: { lockedUntil: newLockedUntil } }
+        );
+      }, renewEveryMs);
+    }
+
     const result = await fn();
     return { ran: true, result };
   } finally {
+    if (renewTimer) clearInterval(renewTimer);
     await DistributedLock.updateOne({ key, owner: OWNER }, { $set: { lockedUntil: new Date(0) } });
   }
 }

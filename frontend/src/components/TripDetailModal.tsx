@@ -26,6 +26,56 @@ function toKeyValueRows(obj: Record<string, unknown> | undefined) {
   return entries;
 }
 
+function isMeaningfulValue(value: unknown) {
+  if (value == null) return false;
+  if (typeof value === "string") {
+    const s = value.trim();
+    if (!s) return false;
+    if (s === "-") return false;
+    return true;
+  }
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "boolean") return true;
+  return Boolean(formatUnknown(value));
+}
+
+function splitRowsByValue(rows: Array<[string, unknown]>) {
+  const filled: Array<[string, unknown]> = [];
+  const empty: Array<[string, unknown]> = [];
+
+  for (const row of rows) {
+    if (isMeaningfulValue(row[1])) filled.push(row);
+    else empty.push(row);
+  }
+
+  return { filled, empty };
+}
+
+function KeyValueTableSplit({ rows }: { rows: Array<[string, unknown]> }) {
+  if (!rows || rows.length === 0) return null;
+
+  const { filled, empty } = splitRowsByValue(rows);
+
+  return (
+    <div className="space-y-3">
+      {filled.length > 0 ? (
+        <KeyValueTable rows={filled} />
+      ) : (
+        <div className="text-xs text-muted-foreground">No filled values.</div>
+      )}
+
+      {empty.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-xs text-muted-foreground">
+            Show {empty.length} empty fields
+          </summary>
+          <KeyValueTable rows={empty} />
+        </details>
+      )}
+    </div>
+  );
+}
+
 function isNonEmpty(value: string | undefined | null): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -52,6 +102,12 @@ export function TripDetailModal({ trip, open, onClose }: TripDetailModalProps) {
   const sheetRaw = (raw?.sheet?.raw || {}) as Record<string, unknown>;
   const sheetNormalized = (raw?.sheet?.normalized || {}) as Record<string, unknown>;
   const unloadingWeightAssumed = extensions.unloadingWeightAssumed === true;
+
+  const rawRows = toKeyValueRows(sheetRaw);
+  const normalizedRows = toKeyValueRows(sheetNormalized);
+  const rawFilled = splitRowsByValue(rawRows).filled;
+  const normalizedFilled = splitRowsByValue(normalizedRows).filled;
+  const primarySheetRows = rawFilled.length > 0 ? rawFilled : normalizedFilled;
 
   const loadingWeightTons = raw?.loading?.weightTons;
   const unloadingWeightTons = raw?.unloading?.weightTons;
@@ -138,6 +194,13 @@ export function TripDetailModal({ trip, open, onClose }: TripDetailModalProps) {
             )}
           </div>
 
+          {primarySheetRows.length > 0 && (
+            <div className="rounded-lg border p-4 space-y-2">
+              <p className="text-sm font-semibold font-display">Sheet Values</p>
+              <KeyValueTable rows={primarySheetRows} />
+            </div>
+          )}
+
           {/* Financials */}
           <div className="rounded-lg border p-4 space-y-2">
             <p className="text-sm font-semibold font-display mb-3">Financial Summary</p>
@@ -161,13 +224,13 @@ export function TripDetailModal({ trip, open, onClose }: TripDetailModalProps) {
                 {Object.keys(sheetRaw).length > 0 && (
                   <div>
                     <p className="text-xs font-medium text-muted-foreground mb-2">Raw (original headers)</p>
-                    <KeyValueTable rows={toKeyValueRows(sheetRaw)} />
+                    <KeyValueTableSplit rows={rawRows} />
                   </div>
                 )}
                 {Object.keys(sheetNormalized).length > 0 && (
                   <div>
                     <p className="text-xs font-medium text-muted-foreground mb-2">Normalized (future-proof keys)</p>
-                    <KeyValueTable rows={toKeyValueRows(sheetNormalized)} />
+                    <KeyValueTableSplit rows={normalizedRows} />
                   </div>
                 )}
               </div>

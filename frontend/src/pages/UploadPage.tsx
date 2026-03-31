@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Upload, FileSpreadsheet, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { uploadFile } from "@/services/api";
 
 type UploadState = "idle" | "uploading" | "success" | "error";
@@ -59,6 +59,7 @@ function KeyValueTable({ data }: { data: Record<string, unknown> }) {
 }
 
 export default function UploadPage() {
+  const qc = useQueryClient();
   const [state, setState] = useState<UploadState>("idle");
   const [progress, setProgress] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -96,6 +97,7 @@ export default function UploadPage() {
       setIsProcessing(false);
       setProgress(100);
       setState("success");
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
     onError: (err) => {
       setIsProcessing(false);

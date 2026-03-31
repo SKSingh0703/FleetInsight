@@ -94,9 +94,12 @@ export async function listSheetSyncRuns(req, res) {
 }
 
 export async function runSheetSyncNow(req, res) {
-  const out = await withMongoLock({ key: "sheetSync", ttlMs: 5 * 60 * 1000 }, async () => {
-    return runSheetSyncOnce();
-  });
+  const out = await withMongoLock(
+    { key: "sheetSync", ttlMs: 5 * 60 * 1000, autoRenewIntervalMs: 60 * 1000 },
+    async () => {
+      return runSheetSyncOnce();
+    }
+  );
 
   if (!out.ran) {
     return res.status(409).json({ message: "Sync already running" });

@@ -11,6 +11,7 @@ import UploadPage from "@/pages/UploadPage";
 import LoginPage from "@/pages/LoginPage";
 import PendingPage from "@/pages/PendingPage";
 import AdminPage from "@/pages/AdminPage";
+import AccessDenied from "@/pages/AccessDenied";
 import NotFound from "@/pages/NotFound";
 import { AuthProvider } from "@/auth/AuthContext";
 import { RequireAdmin, RequireAuth } from "@/auth/RequireAuth";
@@ -29,6 +30,14 @@ const App = () => (
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/pending" element={<PendingPage />} />
+                <Route
+                  path="/access-denied"
+                  element={
+                    <RequireAuth>
+                      <AccessDenied />
+                    </RequireAuth>
+                  }
+                />
 
                 <Route
                   path="/"

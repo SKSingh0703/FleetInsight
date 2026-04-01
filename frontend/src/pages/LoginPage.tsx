@@ -1,5 +1,6 @@
 import { GoogleLogin } from "@react-oauth/google";
 import { useMutation } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, postAuthGoogle } from "@/services/api";
 import { useAuth } from "@/auth/AuthContext";
@@ -11,6 +12,8 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { setSession } = useAuth();
   const hasGoogleClientId = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
+
+  const [pendingSeconds, setPendingSeconds] = useState<number>(0);
 
   const mutation = useMutation({
     mutationFn: async (credential: string) => postAuthGoogle(credential),
@@ -24,6 +27,36 @@ export default function LoginPage() {
     },
   });
 
+  useEffect(() => {
+    if (!mutation.isPending) {
+      setPendingSeconds(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    const t = window.setInterval(() => {
+      setPendingSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 250);
+
+    return () => window.clearInterval(t);
+  }, [mutation.isPending]);
+
+  const pendingTitle = useMemo(() => {
+    if (!mutation.isPending) return "";
+    if (pendingSeconds < 3) return "Signing you in…";
+    if (pendingSeconds < 12) return "Waking up the server…";
+    return "Still working…";
+  }, [mutation.isPending, pendingSeconds]);
+
+  const pendingDescription = useMemo(() => {
+    if (!mutation.isPending) return "";
+    if (pendingSeconds < 3) return "Verifying your Google sign-in.";
+    if (pendingSeconds < 12) {
+      return "The backend is on a free-tier host and may take a few seconds to start after inactivity.";
+    }
+    return "If this takes longer than usual, you can retry. The server may still be starting.";
+  }, [mutation.isPending, pendingSeconds]);
+
   const networkError = (() => {
     if (!mutation.isError) return false;
     const err = mutation.error;
@@ -34,6 +67,40 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/40 flex items-center">
+      {mutation.isPending && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm">
+          <div className="min-h-screen flex items-center justify-center px-4">
+            <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="mt-1 h-5 w-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+                <div className="flex-1">
+                  <div className="text-base font-display font-bold">{pendingTitle}</div>
+                  <div className="text-sm text-muted-foreground mt-1">{pendingDescription}</div>
+                  <div className="text-xs text-muted-foreground mt-3">Elapsed: {pendingSeconds}s</div>
+                </div>
+              </div>
+
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    mutation.reset();
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    window.location.reload();
+                  }}
+                >
+                  Retry
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="mx-auto w-full max-w-6xl px-4 py-8">
         <div className="grid gap-8 md:grid-cols-2 md:items-center">
           <div className="space-y-5">

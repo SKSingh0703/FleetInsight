@@ -44,12 +44,34 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { toast } from "@/hooks/use-toast";
 import { useEffect, useMemo, useState } from "react";
 
 export default function AdminPage() {
   const qc = useQueryClient();
   const { user: currentUser } = useAuth();
   const [removeTarget, setRemoveTarget] = useState<{ id: string; email: string } | null>(null);
+
+  function getApiErrorMessage(err: unknown): string {
+    if (!err) return "Request failed";
+    if (err instanceof ApiError) {
+      const raw = typeof err.bodyText === "string" && err.bodyText.trim() ? err.bodyText : err.message;
+      try {
+        const parsed = JSON.parse(raw) as { message?: unknown };
+        if (typeof parsed?.message === "string" && parsed.message.trim()) return parsed.message.trim();
+      } catch {
+        // ignore
+      }
+      return raw || "Request failed";
+    }
+    if (err instanceof Error) return err.message;
+    return "Request failed";
+  }
+
+  function isSyncAlreadyRunningMessage(msg: string) {
+    const m = (msg || "").toLowerCase();
+    return m.includes("already running") || m.includes("sync already running");
+  }
 
   const [sheetEnabled, setSheetEnabled] = useState(true);
   const [sheetSpreadsheetId, setSheetSpreadsheetId] = useState("");
@@ -125,11 +147,43 @@ export default function AdminPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["sheetSyncStatus"] });
       qc.invalidateQueries({ queryKey: ["sheetSyncSuggest"] });
+      toast({
+        title: "Configuration saved",
+        description: "Sheet sync settings have been updated.",
+      });
+    },
+    onError: (err) => {
+      toast({
+        title: "Unable to save configuration",
+        description: getApiErrorMessage(err),
+        variant: "destructive",
+      });
     },
   });
 
   const runSheetSync = useMutation({
     mutationFn: adminRunSheetSyncNow,
+    onSuccess: () => {
+      toast({
+        title: "Sync started",
+        description: "Google Sheet sync is running. Refresh status in a moment.",
+      });
+    },
+    onError: (err) => {
+      const msg = getApiErrorMessage(err);
+      if (isSyncAlreadyRunningMessage(msg)) {
+        toast({
+          title: "Sync already running",
+          description: "A sync is currently in progress. Please wait and refresh status.",
+        });
+        return;
+      }
+      toast({
+        title: "Unable to start sync",
+        description: msg,
+        variant: "destructive",
+      });
+    },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["sheetSyncStatus"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
@@ -423,30 +477,29 @@ export default function AdminPage() {
                     disabled={saveSheetConfig.isPending || sheetSpreadsheetId.trim().length === 0}
                     onClick={() => saveSheetConfig.mutate()}
                   >
-                    Save configuration
+                    {saveSheetConfig.isPending ? "Saving…" : "Save configuration"}
                   </Button>
-                  <Button variant="outline" disabled={runSheetSync.isPending} onClick={() => runSheetSync.mutate()}>
-                    Sync now
+                  <Button
+                    variant="outline"
+                    disabled={runSheetSync.isPending}
+                    onClick={() => runSheetSync.mutate()}
+                  >
+                    {runSheetSync.isPending ? "Syncing…" : "Sync now"}
                   </Button>
                   <Button
                     variant="ghost"
                     disabled={sheetStatus.isFetching}
-                    onClick={() => qc.invalidateQueries({ queryKey: ["sheetSyncStatus"] })}
+                    onClick={() => {
+                      qc.invalidateQueries({ queryKey: ["sheetSyncStatus"] });
+                      toast({
+                        title: "Refreshing status",
+                        description: "Fetching latest sync status from the server.",
+                      });
+                    }}
                   >
                     Refresh status
                   </Button>
                 </div>
-
-                {saveSheetConfig.error && (
-                  <div className="text-sm text-destructive">
-                    {saveSheetConfig.error instanceof Error ? saveSheetConfig.error.message : "Failed"}
-                  </div>
-                )}
-                {runSheetSync.error && (
-                  <div className="text-sm text-destructive">
-                    {runSheetSync.error instanceof Error ? runSheetSync.error.message : "Failed"}
-                  </div>
-                )}
               </CardContent>
               <CardFooter className="justify-between">
                 <div className="text-xs text-muted-foreground">

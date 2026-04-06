@@ -1,5 +1,7 @@
 const DEFAULT_RATE_PER_TON = 250;
 
+const DEFAULT_JHARKHAND_DIESEL_PRICE_PER_LITER = 93.5;
+
 function normalizeHeader(header) {
   if (header == null) return "";
   return String(header)
@@ -13,16 +15,6 @@ function normalizeHeader(header) {
 
 export function normalizeHeaderKey(header) {
   return normalizeHeader(header);
-}
-
-export function buildNormalizedRow(rawRow) {
-  const out = {};
-  for (const [key, value] of Object.entries(rawRow || {})) {
-    const nk = normalizeHeader(key);
-    if (!nk) continue;
-    if (out[nk] == null || String(out[nk]).trim() === "") out[nk] = value;
-  }
-  return out;
 }
 
 function buildHeaderIndex(rawRow) {
@@ -62,8 +54,46 @@ function toNumber(value, { defaultValue = 0 } = {}) {
   const s = String(value).trim();
   if (!s) return defaultValue;
   const cleaned = s.replace(/,/g, "");
+
+  const tryParsePlusSum = (expr) => {
+    const normalized = String(expr).replace(/\s+/g, "");
+    if (!normalized.includes("+")) return undefined;
+    if (!/^[0-9+.-]+$/.test(normalized)) return undefined;
+    const parts = normalized.split("+").filter((p) => p.length > 0);
+    if (parts.length < 2) return undefined;
+    const nums = parts.map((p) => Number(p));
+    if (nums.some((n) => !Number.isFinite(n))) return undefined;
+    return nums.reduce((sum, n) => sum + n, 0);
+  };
+
+  const sumValue = tryParsePlusSum(cleaned);
+  if (typeof sumValue === "number" && Number.isFinite(sumValue)) return sumValue;
+
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : defaultValue;
+}
+
+function parseDieselCost(value) {
+  if (value == null) return 0;
+
+  // If explicitly marked as liters (e.g. "20 LTR"), treat as liters.
+  const s = typeof value === "string" ? value.trim() : "";
+  if (s) {
+    const normalized = s.toLowerCase().replace(/\s+/g, " ");
+    const hasLitersUnit = /\b(ltr|litre|liter|liters|litres|l)\b/.test(normalized);
+    if (hasLitersUnit) {
+      const m = normalized.match(/-?\d+(?:\.\d+)?/);
+      const liters = m ? Number(m[0]) : Number.NaN;
+      if (Number.isFinite(liters) && liters >= 0) return liters * DEFAULT_JHARKHAND_DIESEL_PRICE_PER_LITER;
+      return 0;
+    }
+  }
+
+  // Otherwise parse as numeric. If it's a small number, assume it is liters.
+  const n = toNumber(value, { defaultValue: 0 });
+  if (!Number.isFinite(n) || n < 0) return 0;
+  if (n > 0 && n <= 300) return n * DEFAULT_JHARKHAND_DIESEL_PRICE_PER_LITER;
+  return n;
 }
 
 function toUpperToken(value) {
@@ -153,6 +183,14 @@ export const COLUMN_ALIASES = {
     "CHASSIS NUMBER",
     "chassisNumber",
   ],
+  deliveryNumber: [
+    "DELIVERY NO.",
+    "DELIVERY NO",
+    "DELIVERY",
+    "DELIVERY NUMBER",
+    "DEL NO",
+    "DEL.NO",
+  ],
   vehicleNumber: [
     "V.NO.",
     "V.NO",
@@ -167,7 +205,18 @@ export const COLUMN_ALIASES = {
     "vehicleNumber",
   ],
   tripType: ["OWN/MARKET", "OWN MARKET", "TRIP TYPE", "TYPE", "tripType"],
-  bookNumber: ["BOOK No.", "BOOK NO", "BOOK", "bookNumber"],
+  marketVehicleBookNumber: [
+    "MARKET VEHICLE BOOK No.",
+    "MARKET VEHICLE BOOK NO.",
+    "MARKET VEHICLE BOOK NO",
+    "MARKET VEHICLE BOOK",
+    "BOOK No.",
+    "BOOK NO",
+    "BOOK",
+    "bookNumber",
+  ],
+
+  tripNumber: ["TRIP NO.", "TRIP NO", "TRIP NUMBER", "TRIP"],
 
   loadingDate: ["L.Date", "L DATE", "LOADING DATE", "LOAD DATE"],
   unloadingDate: ["U.Date", "U DATE", "UNLOADING DATE", "UNLOAD DATE"],
@@ -178,46 +227,51 @@ export const COLUMN_ALIASES = {
   loadingWeight: ["L.Weight", "L WEIGHT", "LOADING WEIGHT", "LOAD WEIGHT"],
   unloadingWeight: ["U.Weight", "U WEIGHT", "UNLOADING WEIGHT", "UNLOAD WEIGHT"],
 
+  shortageTons: ["SHORTAGE", "SHORTAGE(T)", "SHORTAGE T", "SHORT"],
+
   ratePerTon: ["RATE", "RATE/TON", "RATE PER TON", "ratePerTon"],
 
-  cash1: ["CASH(P)", "CASH P", "CASH"],
-  cash2: ["CASH(P/C/O)", "CASH P/C/O", "CASH PCO"],
-  diesel: ["DIESEL(P)", "DIESEL P", "DIESEL"],
-  other: ["C.DETAILS", "C DETAILS", "DETAILS", "OTHER", "EXPENSE", "EXPENSES"],
+  totalFreight: ["T.F.", "T.F", "TF", "TOTAL FREIGHT", "FREIGHT"],
+
+  cash: ["CASH", "CASH(P)", "CASH P", "CASH(P/C/O)", "CASH P/C/O", "CASH PCO"],
+  cardAccount: ["CARD/ACCOUNT", "CARD ACCOUNT", "CARD", "ACCOUNT"],
+  cashDate: ["CASH DATE", "CASH DT", "CASH DT."],
+
+  diesel: ["DIESEL", "DIESEL(P)", "DIESEL P"],
+  pumpCard: ["PUMP/CARD", "PUMP CARD", "PUMP", "DIESEL CARD"],
+  dieselDate: ["DIESEL DATE", "DIESEL DT", "DIESEL DT."],
+
+  fastag: ["FASTAG"],
+  fastagDate: ["FASTAG DATE", "FASTAG DT", "FASTAG DT."],
+
+  otherExpenses: ["OTHER", "OTHER EXP", "OTHER EXPENSE", "OTHER EXPENSES"],
 
   totalAdvance: ["TOTAL ADV.", "TOTAL ADV", "ADVANCE", "TOTAL ADVANCE"],
 
-  party: ["PARTY.", "PARTY", "PARTY TYPE", "partyType"],
+  party: ["OTHER", "PARTY.", "PARTY", "PARTY TYPE", "partyType"],
+  partyOtherName: ["OTHER TPT.", "OTHER TPT", "OTHER TPT NAME", "OTHER PARTY", "OTHER PARTY NAME"],
   partyName: ["PARTY NAME", "PARTY NAME.", "PARTYNAME", "CUSTOMER", "CUSTOMER NAME"],
 
   challanDate: ["CHALLAN DATE", "CHALAN DATE", "CHALLAN DT", "CHALAN DT"],
-  challanNumber: ["CHALLAN", "CHALAN", "CHALLAN NO", "CHALAN NO", "CHALLAN NO.", "CHALAN NO."],
-  billNumber: ["BILL NO.", "BILL NO", "BILL", "BILL NUMBER"],
-  billDate: ["BILL DATE", "BILL DT", "BILL DT.", "BILLDATE"],
+  billBookNumber: ["BILL BOOK NO.", "BILL BOOK NO", "BILL BOOK", "BILL NO.", "BILL NO", "BILL"],
   marketPaymentDate: ["MARKET PAYMENT DATE", "MKT PAYMENT DATE", "MARKET PAY DATE", "PAYMENT DATE"],
-  bank: ["BANK", "BANK NAME"],
-  account: ["ACCT", "ACCT.", "ACCOUNT", "A/C", "A/C NO", "ACCOUNT NO"],
-  amount: ["AMT.", "AMT", "AMOUNT"],
-  detailsText: ["DETAILS", "DETAIL", "NARRATION", "REMARK", "REMARKS"],
+  remarks: ["REMARKS", "REMARK", "NARRATION"],
+  tripStatus: ["TRIP STATUS", "STATUS"],
 };
 
 export function extractTripFields(rawRow) {
+  const sno = getFirstValue(rawRow, COLUMN_ALIASES.sno);
   const invoiceNumber = getFirstValue(rawRow, COLUMN_ALIASES.invoiceNumber);
   const chassisNumber = getFirstValue(rawRow, COLUMN_ALIASES.chassisNumber);
+  const deliveryNumber = getFirstValue(rawRow, COLUMN_ALIASES.deliveryNumber);
   const vehicleNumber = getFirstValue(rawRow, COLUMN_ALIASES.vehicleNumber);
+  const tripNumber = getFirstValue(rawRow, COLUMN_ALIASES.tripNumber);
 
   const tripTypeRaw = getFirstValue(rawRow, COLUMN_ALIASES.tripType);
-  const bookNumber = getFirstValue(rawRow, COLUMN_ALIASES.bookNumber);
+  const marketVehicleBookNumber = getFirstValue(rawRow, COLUMN_ALIASES.marketVehicleBookNumber);
 
   const normalizedTripType = normalizeTripType(tripTypeRaw);
-  const tripType = (() => {
-    // Priority 1: explicit OWN/MARKET column (if present and valid)
-    if (normalizedTripType) return normalizedTripType;
-
-    // Priority 2: infer from book number
-    const bn = bookNumber != null ? String(bookNumber).trim() : "";
-    return bn ? "MARKET" : "OWN";
-  })();
+  const tripType = normalizedTripType;
 
   const loadingDate = toDate(getFirstValue(rawRow, COLUMN_ALIASES.loadingDate));
   const unloadingDate = toDate(getFirstValue(rawRow, COLUMN_ALIASES.unloadingDate));
@@ -226,94 +280,87 @@ export function extractTripFields(rawRow) {
   const unloadingPoint = getFirstValue(rawRow, COLUMN_ALIASES.unloadingPoint);
 
   const loadingWeightTons = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.loadingWeight), {
-    defaultValue: 0,
+    defaultValue: undefined,
   });
   const unloadingWeightTons = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.unloadingWeight), {
-    defaultValue: 0,
+    defaultValue: undefined,
   });
 
-  const ratePerTon = (() => {
-    const r = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.ratePerTon), {
-      defaultValue: DEFAULT_RATE_PER_TON,
-    });
-    return r > 0 ? r : DEFAULT_RATE_PER_TON;
-  })();
+  const ratePerTon = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.ratePerTon), {
+    defaultValue: undefined,
+  });
 
-  const cashPValues = getAllValues(rawRow, COLUMN_ALIASES.cash1);
-  const cashPCOValues = getAllValues(rawRow, COLUMN_ALIASES.cash2);
-  const cashP = cashPValues.reduce((sum, v) => sum + toNumber(v, { defaultValue: 0 }), 0);
-  const cashPCO = cashPCOValues.reduce((sum, v) => sum + toNumber(v, { defaultValue: 0 }), 0);
-  const cash = cashP + cashPCO;
+  const shortageTons = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.shortageTons), { defaultValue: undefined });
+  const totalFreight = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.totalFreight), { defaultValue: undefined });
 
-  const dieselValues = getAllValues(rawRow, COLUMN_ALIASES.diesel);
-  const diesel = dieselValues.reduce(
-    (sum, v) => sum + toNumber(v, { defaultValue: 0 }),
-    0
-  );
+  const cash = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.cash), { defaultValue: 0 });
+  const cardAccount = getFirstValue(rawRow, COLUMN_ALIASES.cardAccount);
+  const cashDate = toDate(getFirstValue(rawRow, COLUMN_ALIASES.cashDate));
 
-  const otherValues = getAllValues(rawRow, COLUMN_ALIASES.other);
-  const other = otherValues.reduce(
-    (sum, v) => sum + toNumber(v, { defaultValue: 0 }),
-    0
-  );
+  const diesel = parseDieselCost(getFirstValue(rawRow, COLUMN_ALIASES.diesel));
+  const pumpCard = getFirstValue(rawRow, COLUMN_ALIASES.pumpCard);
+  const dieselDate = toDate(getFirstValue(rawRow, COLUMN_ALIASES.dieselDate));
+
+  const fastag = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.fastag), { defaultValue: 0 });
+  const fastagDate = toDate(getFirstValue(rawRow, COLUMN_ALIASES.fastagDate));
+
+  const otherExpenses = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.otherExpenses), { defaultValue: 0 });
 
   const totalAdvance = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.totalAdvance), { defaultValue: 0 });
 
   const partyType = normalizePartyType(getFirstValue(rawRow, COLUMN_ALIASES.party));
-  const partyName = getFirstValue(rawRow, COLUMN_ALIASES.partyName);
+  const partyOtherName = getFirstValue(rawRow, COLUMN_ALIASES.partyOtherName);
+  const partyNameFallback = getFirstValue(rawRow, COLUMN_ALIASES.partyName);
+  const partyName = (() => {
+    if (partyType === "OTHER") {
+      return partyOtherName ?? partyNameFallback;
+    }
+    if (partyType === "TPT" || partyType === "LOGISTICS") return partyType;
+    return partyNameFallback;
+  })();
 
   const challanDate = toDate(getFirstValue(rawRow, COLUMN_ALIASES.challanDate));
-  const challanNumber = getFirstValue(rawRow, COLUMN_ALIASES.challanNumber);
-  const billNumber = getFirstValue(rawRow, COLUMN_ALIASES.billNumber);
-  const billDate = toDate(getFirstValue(rawRow, COLUMN_ALIASES.billDate));
+  const billBookNumber = getFirstValue(rawRow, COLUMN_ALIASES.billBookNumber);
   const marketPaymentDate = toDate(getFirstValue(rawRow, COLUMN_ALIASES.marketPaymentDate));
-  const bank = getFirstValue(rawRow, COLUMN_ALIASES.bank);
-  const account = getFirstValue(rawRow, COLUMN_ALIASES.account);
-  const amount = toNumber(getFirstValue(rawRow, COLUMN_ALIASES.amount), { defaultValue: 0 });
-  const detailsText = getFirstValue(rawRow, COLUMN_ALIASES.detailsText);
+  const remarks = getFirstValue(rawRow, COLUMN_ALIASES.remarks);
+  const tripStatus = getFirstValue(rawRow, COLUMN_ALIASES.tripStatus);
 
   return {
+    sno,
     invoiceNumber,
+    deliveryNumber,
     chassisNumber,
     vehicleNumber,
     tripType,
-    bookNumber,
+    marketVehicleBookNumber,
+    tripNumber,
     loadingDate,
     unloadingDate,
     loadingPoint,
     unloadingPoint,
     loadingWeightTons,
     unloadingWeightTons,
+    shortageTons,
     ratePerTon,
-    expenses: { cash, diesel, other },
-    extensions: {
-      totalAdvance,
-      expensesBreakdown: {
-        cashP,
-        cashPCO,
-        diesel,
-        other,
-        otherRaw: otherValues,
-      },
-      challanDate,
-      challanNumber,
-      billNumber,
-      billDate,
-      marketPaymentDate,
-      bank,
-      account,
-      amount,
-      detailsText,
-    },
+    totalFreight,
+    cash,
+    cardAccount,
+    cashDate,
+    diesel,
+    pumpCard,
+    dieselDate,
+    fastag,
+    fastagDate,
+    totalAdvance,
+    otherExpenses,
     partyType,
     partyName,
+    challanDate,
+    billBookNumber,
+    marketPaymentDate,
+    remarks,
+    tripStatus,
   };
-}
-
-export function computeTotalFreight({ unloadingWeightTons, ratePerTon }) {
-  const w = Number.isFinite(unloadingWeightTons) ? unloadingWeightTons : 0;
-  const r = Number.isFinite(ratePerTon) ? ratePerTon : DEFAULT_RATE_PER_TON;
-  return w * r;
 }
 
 export function getDefaultRatePerTon() {

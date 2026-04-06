@@ -6,6 +6,7 @@ import searchRoutes from "./searchRoutes.js";
 import authRoutes from "./authRoutes.js";
 import adminRoutes from "./adminRoutes.js";
 import sheetSyncRoutes from "./sheetSyncRoutes.js";
+import tripRoutes from "./tripRoutes.js";
 
 const router = express.Router();
 
@@ -15,6 +16,7 @@ router.use(dashboardRoutes);
 router.use(searchRoutes);
 router.use(adminRoutes);
 router.use(sheetSyncRoutes);
+router.use(tripRoutes);
 
 export default router;
 

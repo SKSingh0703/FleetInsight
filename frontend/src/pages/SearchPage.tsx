@@ -3,23 +3,30 @@ import { useSearchParams } from "react-router-dom";
 import { Search as SearchIcon } from "lucide-react";
 import { FilterPanel, Filters } from "@/components/FilterPanel";
 import { SummaryCard } from "@/components/SummaryCard";
-import { TripTable } from "@/components/TripTable";
+import { ExcelTripTable } from "@/components/ExcelTripTable";
 import { VehicleCard } from "@/components/VehicleCard";
 import { Truck, IndianRupee, BarChart3, TrendingUp } from "lucide-react";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { buildVehicleSummaries, postSearch, toUiTrip } from "@/services/api";
+import {
+  getBookNumberOptions,
+  getChassisNumberOptions,
+  buildVehicleSummaries,
+  getDeliveryNumberOptions,
+  getLoadingPointOptions,
+  getPartyNameOptions,
+  getTripNumberOptions,
+  getUnloadingPointOptions,
+  postSearch,
+  toUiTrip,
+} from "@/services/api";
 import type { SearchFilters } from "@/services/api";
 
 type SearchType =
   | "vehicleNumber"
   | "invoiceNumber"
-  | "chassisNumber"
-  | "bookNumber"
   | "tripKey"
-  | "partyName"
-  | "loadingPoint"
-  | "unloadingPoint";
+  ;
 
 export default function SearchPage() {
   const [searchParams] = useSearchParams();
@@ -48,11 +55,67 @@ export default function SearchPage() {
   const [filters, setFilters] = useState<Filters>({
     tripType: "",
     partyType: "",
-    loadingFrom: "",
-    loadingTo: "",
-    unloadingFrom: "",
-    unloadingTo: "",
+    partyName: "",
+    deliveryNumber: "",
+    tripNumber: "",
+    loadingPoint: "",
+    unloadingPoint: "",
+    chassisNumber: "",
+    bookNumber: "",
   });
+
+  const { data: partyNameOptionsData } = useQuery({
+    queryKey: ["party-name-options"],
+    queryFn: ({ signal }) => getPartyNameOptions(signal),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const partyNameOptions = partyNameOptionsData?.options;
+
+  const { data: loadingPointOptionsData } = useQuery({
+    queryKey: ["loading-point-options"],
+    queryFn: ({ signal }) => getLoadingPointOptions(signal),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: unloadingPointOptionsData } = useQuery({
+    queryKey: ["unloading-point-options"],
+    queryFn: ({ signal }) => getUnloadingPointOptions(signal),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const loadingPointOptions = loadingPointOptionsData?.options;
+  const unloadingPointOptions = unloadingPointOptionsData?.options;
+
+  const { data: chassisNumberOptionsData } = useQuery({
+    queryKey: ["chassis-number-options"],
+    queryFn: ({ signal }) => getChassisNumberOptions(signal),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: bookNumberOptionsData } = useQuery({
+    queryKey: ["book-number-options"],
+    queryFn: ({ signal }) => getBookNumberOptions(signal),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const chassisNumberOptions = chassisNumberOptionsData?.options;
+  const bookNumberOptions = bookNumberOptionsData?.options;
+
+  const { data: deliveryNumberOptionsData } = useQuery({
+    queryKey: ["delivery-number-options"],
+    queryFn: ({ signal }) => getDeliveryNumberOptions(signal),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: tripNumberOptionsData } = useQuery({
+    queryKey: ["trip-number-options"],
+    queryFn: ({ signal }) => getTripNumberOptions(signal),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const deliveryNumberOptions = deliveryNumberOptionsData?.options;
+  const tripNumberOptions = tripNumberOptionsData?.options;
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQuery(query), 300);
@@ -67,25 +130,18 @@ export default function SearchPage() {
 
     if (filters.tripType) out.tripType = filters.tripType as SearchFilters["tripType"];
     if (filters.partyType) out.partyType = filters.partyType as SearchFilters["partyType"];
+    if (filters.partyName) out.partyName = filters.partyName;
+    if (filters.deliveryNumber) out.deliveryNumber = filters.deliveryNumber;
+    if (filters.tripNumber) out.tripNumber = filters.tripNumber;
+    if (filters.loadingPoint) out.loadingPoint = filters.loadingPoint;
+    if (filters.unloadingPoint) out.unloadingPoint = filters.unloadingPoint;
+    if (filters.chassisNumber) out.chassisNumber = filters.chassisNumber;
+    if (filters.bookNumber) out.bookNumber = filters.bookNumber;
 
     if (tripFrom || tripTo) {
       out.tripDateRange = {
         ...(tripFrom ? { from: tripFrom } : {}),
         ...(tripTo ? { to: tripTo } : {}),
-      };
-    }
-
-    if (filters.loadingFrom || filters.loadingTo) {
-      out.dateRange = {
-        ...(filters.loadingFrom ? { from: filters.loadingFrom } : {}),
-        ...(filters.loadingTo ? { to: filters.loadingTo } : {}),
-      };
-    }
-
-    if (filters.unloadingFrom || filters.unloadingTo) {
-      out.unloadingDateRange = {
-        ...(filters.unloadingFrom ? { from: filters.unloadingFrom } : {}),
-        ...(filters.unloadingTo ? { to: filters.unloadingTo } : {}),
       };
     }
 
@@ -151,11 +207,6 @@ export default function SearchPage() {
         >
           <option value="vehicleNumber">Vehicle</option>
           <option value="invoiceNumber">Invoice</option>
-          <option value="chassisNumber">Chassis</option>
-          <option value="bookNumber">Book</option>
-          <option value="partyName">Party Name</option>
-          <option value="loadingPoint">Loading Point</option>
-          <option value="unloadingPoint">Unloading Point</option>
           <option value="tripKey">Trip Key</option>
         </select>
         <input
@@ -167,16 +218,6 @@ export default function SearchPage() {
               ? "Search by vehicle number (e.g. 28, 0028, JH05AC0028)"
               : searchType === "invoiceNumber"
               ? "Search by invoice number"
-              : searchType === "chassisNumber"
-              ? "Search by chassis number"
-              : searchType === "bookNumber"
-              ? "Search by book number"
-              : searchType === "partyName"
-              ? "Search by party name"
-              : searchType === "loadingPoint"
-              ? "Search by loading point"
-              : searchType === "unloadingPoint"
-              ? "Search by unloading point"
               : "Search by trip key"
           }
           className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
@@ -203,23 +244,24 @@ export default function SearchPage() {
         </div>
       </form>
 
-      {/* Filters */}
-      <FilterPanel filters={filters} onChange={setFilters} />
+      <FilterPanel
+        filters={filters}
+        onChange={setFilters}
+        partyNameOptions={partyNameOptions}
+        deliveryNumberOptions={deliveryNumberOptions}
+        tripNumberOptions={tripNumberOptions}
+        loadingPointOptions={loadingPointOptions}
+        unloadingPointOptions={unloadingPointOptions}
+        chassisNumberOptions={chassisNumberOptions}
+        bookNumberOptions={bookNumberOptions}
+      />
 
-      {/* Results */}
-      {hasCriteria && searchType === "vehicleNumber" && !activeVehicle && matchedVehicles.length > 1 && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <h2 className="text-sm font-semibold text-muted-foreground mb-3">
-            {matchedVehicles.length} vehicles matched
-          </h2>
+      {hasCriteria && searchType === "vehicleNumber" && !activeVehicle && !isLoading && !isError && matchedVehicles.length > 0 && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
+          <div className="text-sm text-muted-foreground">{matchedVehicles.length} vehicles matched</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {matchedVehicles.map((v, i) => (
-              <VehicleCard
-                key={v.vehicleNumber}
-                vehicle={v}
-                index={i}
-                onClick={() => setSelectedVehicle(v.vehicleNumber)}
-              />
+              <VehicleCard key={v.vehicleNumber} vehicle={v} index={i} onClick={() => setSelectedVehicle(v.vehicleNumber)} />
             ))}
           </div>
         </motion.div>
@@ -247,7 +289,7 @@ export default function SearchPage() {
         </div>
       )}
 
-      {hasCriteria && (activeVehicle || filteredTrips.length > 0) && !isLoading && !isError && (
+      {hasCriteria && filteredTrips.length > 0 && !isLoading && !isError && (
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
           {activeVehicle && (
             <div className="flex items-center gap-2">
@@ -269,7 +311,7 @@ export default function SearchPage() {
             <SummaryCard title="Profit" value={`₹${totalProfit.toLocaleString("en-IN")}`} icon={TrendingUp} variant="profit" />
           </div>
 
-          <TripTable trips={filteredTrips} />
+          <ExcelTripTable trips={filteredTrips} />
         </motion.div>
       )}
 

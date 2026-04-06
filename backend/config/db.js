@@ -15,43 +15,27 @@ function safeString(value) {
 }
 
 function buildTripKeyPayloadFromDoc(doc) {
-  const vehicleNumber = safeString(doc?.vehicleNumber);
-  const chassisNumber = safeString(doc?.chassisNumber);
-  const tripType = safeString(doc?.tripType);
-  const partyType = safeString(doc?.partyType);
-  const bookNumber = safeString(doc?.bookNumber);
-  const loadingPoint = safeString(doc?.loading?.location?.name);
-  const unloadingPoint = safeString(doc?.unloading?.location?.name);
-  const loadingDate = toDateOnlyIso(doc?.loading?.date);
-  const unloadingDate = toDateOnlyIso(doc?.unloading?.date);
-  const loadingWeightTons = Number(doc?.loading?.weightTons ?? 0);
-  const unloadingWeightTons = Number(doc?.unloading?.weightTons ?? 0);
-  const ratePerTon = Number(doc?.ratePerTon ?? 0);
+  const sno = safeString(doc?.sno);
+  const invoiceNumber = safeString(doc?.invoiceNumber);
+  const sheetName = safeString(doc?.sheet?.sheetName);
+
+  const identityValue = sno || invoiceNumber;
+  const identityType = sno ? "SNO" : invoiceNumber ? "INVOICE" : "";
 
   return {
-    vehicleNumber,
-    chassisNumber,
-    tripType,
-    partyType,
-    bookNumber: tripType === "MARKET" ? bookNumber : "",
-    loadingDate,
-    unloadingDate: unloadingDate || loadingDate,
-    loadingPoint,
-    unloadingPoint,
-    loadingWeightTons,
-    unloadingWeightTons,
-    ratePerTon,
+    v: 4,
+    sheetName,
+    type: identityType,
+    value: identityValue,
   };
 }
 
 function computeTripKeyFromDoc(doc) {
   const payload = buildTripKeyPayloadFromDoc(doc);
-  const isGoodKey =
-    payload.vehicleNumber.length > 0 &&
-    payload.loadingDate.length > 0 &&
-    Number.isFinite(payload.unloadingWeightTons);
-
-  const base = isGoodKey ? payload : { legacy: true, id: String(doc?._id || "") };
+  const hasIdentity = typeof payload?.value === "string" && payload.value.trim().length > 0;
+  const base = hasIdentity
+    ? payload
+    : { legacy: true, id: String(doc?._id || ""), existingTripKey: safeString(doc?.tripKey) };
   return crypto.createHash("sha256").update(JSON.stringify(base)).digest("hex");
 }
 

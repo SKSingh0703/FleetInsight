@@ -1,8 +1,6 @@
 import {
   extractTripFields,
-  computeTotalFreight,
   getDefaultRatePerTon,
-  buildNormalizedRow,
 } from "./mappingService.js";
 
 import { normalizeVehicle } from "../utils/vehicleNormalization.js";
@@ -44,18 +42,21 @@ export async function processRows(rawRows) {
   const keyIndex = new Map();
 
   for (const entry of rawRows || []) {
-    const { sheetName, rowNumber, raw } = entry || {};
+    const { spreadsheetId, tabName, sheetName, rowNumber, raw } = entry || {};
     try {
       const extracted = extractTripFields(raw);
 
+      const sno = requiredString(extracted.sno);
       const invoiceNumber = requiredString(extracted.invoiceNumber);
-      const chassisNumber = requiredString(extracted.chassisNumber) || UNKNOWN_TEXT;
+      const deliveryNumber = requiredString(extracted.deliveryNumber);
+      const chassisNumber = requiredString(extracted.chassisNumber);
       const rawVehicleNumber = requiredString(extracted.vehicleNumber);
       const { vehicleNumber, vehicleSuffix } = normalizeVehicle(rawVehicleNumber);
       const tripType = extracted.tripType || "OWN";
       const partyType = extracted.partyType || "OTHER";
       const partyName = requiredString(extracted.partyName) || undefined;
-      const bookNumber = requiredString(extracted.bookNumber);
+      const tripNumber = requiredString(extracted.tripNumber);
+      const marketVehicleBookNumber = requiredString(extracted.marketVehicleBookNumber);
 
       const loadingDate = extracted.loadingDate;
       const unloadingDate = extracted.unloadingDate;
@@ -63,21 +64,31 @@ export async function processRows(rawRows) {
       const unloadingPoint = normalizeLocationName(extracted.unloadingPoint);
 
       const loadingWeightTons = extracted.loadingWeightTons;
-      const rawUnloadingWeightTons = extracted.unloadingWeightTons;
+      const unloadingWeightTons = extracted.unloadingWeightTons;
 
-      const ratePerTon = isFiniteNonNegative(extracted.ratePerTon)
+      const ratePerTon = isFiniteNonNegative(extracted.ratePerTon) && extracted.ratePerTon > 0
         ? extracted.ratePerTon
-        : getDefaultRatePerTon();
+        : 0;
 
-      const expenses = {
-        cash: isFiniteNonNegative(extracted.expenses?.cash) ? extracted.expenses.cash : 0,
-        diesel: isFiniteNonNegative(extracted.expenses?.diesel) ? extracted.expenses.diesel : 0,
-        other: isFiniteNonNegative(extracted.expenses?.other) ? extracted.expenses.other : 0,
-      };
+      const cash = isFiniteNonNegative(extracted.cash) ? extracted.cash : 0;
+      const cardAccount = requiredString(extracted.cardAccount) || undefined;
+      const cashDate = isValidDate(extracted.cashDate) ? extracted.cashDate : undefined;
 
-      const extensions = {
-        ...(extracted.extensions || {}),
-      };
+      const diesel = isFiniteNonNegative(extracted.diesel) ? extracted.diesel : 0;
+      const pumpCard = requiredString(extracted.pumpCard) || undefined;
+      const dieselDate = isValidDate(extracted.dieselDate) ? extracted.dieselDate : undefined;
+
+      const fastag = isFiniteNonNegative(extracted.fastag) ? extracted.fastag : 0;
+      const fastagDate = isValidDate(extracted.fastagDate) ? extracted.fastagDate : undefined;
+
+      const totalAdvance = isFiniteNonNegative(extracted.totalAdvance) ? extracted.totalAdvance : 0;
+      const otherExpenses = isFiniteNonNegative(extracted.otherExpenses) ? extracted.otherExpenses : 0;
+
+      const challanDate = isValidDate(extracted.challanDate) ? extracted.challanDate : undefined;
+      const billBookNumber = requiredString(extracted.billBookNumber) || undefined;
+      const marketPaymentDate = isValidDate(extracted.marketPaymentDate) ? extracted.marketPaymentDate : undefined;
+      const remarks = requiredString(extracted.remarks) || undefined;
+      const tripStatus = requiredString(extracted.tripStatus) || undefined;
 
       const rowIssues = [];
 
@@ -90,67 +101,54 @@ export async function processRows(rawRows) {
         rowIssues.push("Missing both vehicleNumber and loading date");
       }
 
-      // Required fields
-      if (!isFiniteNonNegative(loadingWeightTons)) rowIssues.push("Invalid loading weight");
-
-      const unloadingWeightAssumed =
-        !isFiniteNonNegative(rawUnloadingWeightTons) && isFiniteNonNegative(loadingWeightTons);
-
-      const unloadingWeightTons = unloadingWeightAssumed ? loadingWeightTons : rawUnloadingWeightTons;
-
-      if (!isFiniteNonNegative(unloadingWeightTons)) rowIssues.push("Invalid unloading weight");
+      if (!sno) rowIssues.push("Missing S.No");
 
       // Optional fields: keep if present, otherwise fill safe defaults so schema compatibility is preserved.
       const effectiveTripType = isValidTripType(tripType) ? tripType : "OWN";
       const effectivePartyType = isValidPartyType(partyType) ? partyType : "OTHER";
-      const effectiveUnloadingDate = isValidDate(unloadingDate) ? unloadingDate : loadingDate;
 
-      // When trip is MARKET but book number is missing, downgrade to OWN to avoid rejecting the row.
-      const finalTripType = effectiveTripType === "MARKET" && !bookNumber ? "OWN" : effectiveTripType;
+      const effectiveLoadingWeightTons = isFiniteNonNegative(loadingWeightTons) ? loadingWeightTons : undefined;
+      const effectiveUnloadingWeightTons = isFiniteNonNegative(unloadingWeightTons) ? unloadingWeightTons : undefined;
 
-      const totalFreight = computeTotalFreight({ unloadingWeightTons, ratePerTon });
-      if (!Number.isFinite(totalFreight)) rowIssues.push("Failed to compute totalFreight");
+      // If unloading is missing, we do NOT compute shortage (it stays 0).
+      const shortageTons = (() => {
+        if (isFiniteNonNegative(extracted.shortageTons)) return extracted.shortageTons;
+        if (!isFiniteNonNegative(effectiveUnloadingWeightTons)) return 0;
+        if (!isFiniteNonNegative(effectiveLoadingWeightTons)) return 0;
+        return effectiveLoadingWeightTons - effectiveUnloadingWeightTons;
+      })();
 
-      const rawFingerprint = crypto
-        .createHash("sha256")
-        .update(JSON.stringify(raw || {}))
-        .digest("hex");
+      // totalFreight: prefer sheet value if provided, else compute
+      // computedWeight = U.Weight if present else L.Weight
+      const computedTotalFreight = (() => {
+        if (!Number.isFinite(ratePerTon) || ratePerTon <= 0) return 0;
+        const w = isFiniteNonNegative(effectiveUnloadingWeightTons)
+          ? effectiveUnloadingWeightTons
+          : isFiniteNonNegative(effectiveLoadingWeightTons)
+            ? effectiveLoadingWeightTons
+            : 0;
+        return w * ratePerTon;
+      })();
+
+      // Persist totalFreight only if Excel explicitly provided a value.
+      // Otherwise keep it undefined so it can be computed dynamically in aggregations/UI.
+      const totalFreight = isFiniteNonNegative(extracted.totalFreight) ? extracted.totalFreight : undefined;
+
+      const finalTripType = effectiveTripType;
+
+      if (!Number.isFinite(computedTotalFreight)) rowIssues.push("Failed to compute totalFreight");
 
       // Identity strategy:
-      // - If invoiceNumber is present, treat it as the primary identity so edits (vehicle/date/etc) update the same trip.
-      // - Otherwise, use a stronger composite key only when we have both: vehicleNumber + loadingDate.
-      // - Otherwise, fall back to a fingerprinted key to avoid collisions and accidental dedup.
-      const tripKeyPayload = invoiceNumber
-        ? {
-            v: 2,
-            invoiceNumber,
-          }
-        : hasVehicleNumber && hasLoadingDate
-          ? {
-              v: 2,
-              vehicleNumber,
-              chassisNumber,
-              tripType: finalTripType,
-              partyType: effectivePartyType,
-              bookNumber: finalTripType === "MARKET" ? bookNumber : "",
-              loadingDate: loadingDate.toISOString().slice(0, 10),
-              unloadingDate: isValidDate(effectiveUnloadingDate)
-                ? effectiveUnloadingDate.toISOString().slice(0, 10)
-                : "",
-              loadingPoint,
-              unloadingPoint,
-              loadingWeightTons,
-              unloadingWeightTons,
-              ratePerTon,
-            }
-          : {
-              v: 2,
-              legacy: true,
-              chassisNumber,
-              sheetName,
-              rowNumber,
-              rawFingerprint,
-            };
+      // Uniqueness is enforced by: spreadsheetId + tabName + S.No
+      const effectiveSpreadsheetId = typeof spreadsheetId === "string" ? spreadsheetId.trim() : "";
+      const effectiveTabName = typeof tabName === "string" ? tabName.trim() : typeof sheetName === "string" ? sheetName.trim() : "";
+
+      const tripKeyPayload = {
+        v: 5,
+        spreadsheetId: effectiveSpreadsheetId,
+        tabName: effectiveTabName,
+        sno,
+      };
       const tripKey = crypto
         .createHash("sha256")
         .update(JSON.stringify(tripKeyPayload))
@@ -158,7 +156,7 @@ export async function processRows(rawRows) {
 
       if (rowIssues.length > 0) {
         errors.push({
-          sheetName,
+          sheetName: effectiveTabName,
           rowNumber,
           invoiceNumber: invoiceNumber || undefined,
           tripKey,
@@ -169,40 +167,51 @@ export async function processRows(rawRows) {
       }
 
       const list = keyOccurrences.get(tripKey) || [];
-      list.push({ sheetName, rowNumber, invoiceNumber: invoiceNumber || undefined });
+      list.push({ sheetName: effectiveTabName, rowNumber, invoiceNumber: invoiceNumber || undefined });
       keyOccurrences.set(tripKey, list);
 
       const trip = {
         tripKey,
+        sno,
         invoiceNumber,
+        deliveryNumber,
         chassisNumber,
         vehicleNumber,
         ...(vehicleSuffix ? { vehicleSuffix } : {}),
+        ...(tripNumber ? { tripNumber } : {}),
         tripType: finalTripType,
+        ...(marketVehicleBookNumber ? { marketVehicleBookNumber } : {}),
+        loadingDate: isValidDate(loadingDate) ? loadingDate : undefined,
+        unloadingDate: isValidDate(unloadingDate) ? unloadingDate : undefined,
+        ...(challanDate ? { challanDate } : {}),
+        loadingPoint,
+        unloadingPoint,
+        ...(isFiniteNonNegative(effectiveLoadingWeightTons) ? { loadingWeightTons: effectiveLoadingWeightTons } : {}),
+        ...(isFiniteNonNegative(effectiveUnloadingWeightTons) ? { unloadingWeightTons: effectiveUnloadingWeightTons } : {}),
+        shortageTons,
+        ratePerTon,
+        ...(Number.isFinite(totalFreight) ? { totalFreight } : {}),
+        cash,
+        ...(cardAccount ? { cardAccount } : {}),
+        ...(cashDate ? { cashDate } : {}),
+        diesel,
+        ...(pumpCard ? { pumpCard } : {}),
+        ...(dieselDate ? { dieselDate } : {}),
+        fastag,
+        ...(fastagDate ? { fastagDate } : {}),
+        totalAdvance,
+        otherExpenses,
         partyType: effectivePartyType,
         ...(partyName ? { partyName } : {}),
-        ...(finalTripType === "MARKET" && bookNumber ? { bookNumber } : {}),
-        loading: {
-          date: loadingDate,
-          location: { name: loadingPoint },
-          weightTons: loadingWeightTons,
-        },
-        unloading: {
-          date: effectiveUnloadingDate,
-          location: { name: unloadingPoint },
-          weightTons: unloadingWeightTons,
-        },
-        ratePerTon,
-        expenses,
-        extensions: {
-          ...(extensions || {}),
-          ...(unloadingWeightAssumed ? { unloadingWeightAssumed: true } : {}),
-        },
+        ...(billBookNumber ? { billBookNumber } : {}),
+        ...(marketPaymentDate ? { marketPaymentDate } : {}),
+        ...(remarks ? { remarks } : {}),
+        ...(tripStatus ? { tripStatus } : {}),
         sheet: {
-          sheetName,
+          spreadsheetId: effectiveSpreadsheetId,
+          tabName: effectiveTabName,
           rowNumber,
           raw,
-          normalized: buildNormalizedRow(raw),
         },
       };
 

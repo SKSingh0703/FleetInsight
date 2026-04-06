@@ -1,17 +1,30 @@
 export function buildComputedFieldsStage() {
-  const revenueExpr = {
-    $multiply: [
-      { $ifNull: ["$unloading.weightTons", 0] },
-      { $ifNull: ["$ratePerTon", 0] },
+  const computedWeightExpr = {
+    $cond: [
+      { $gt: [{ $ifNull: ["$unloadingWeightTons", 0] }, 0] },
+      { $ifNull: ["$unloadingWeightTons", 0] },
+      { $ifNull: ["$loadingWeightTons", 0] },
     ],
   };
 
-  const shortageTonsExpr = {
-    $subtract: [
-      { $ifNull: ["$loading.weightTons", 0] },
-      { $ifNull: ["$unloading.weightTons", 0] },
+  const computedRevenueExpr = {
+    $cond: [
+      { $gt: [{ $ifNull: ["$ratePerTon", 0] }, 0] },
+      { $multiply: [computedWeightExpr, { $ifNull: ["$ratePerTon", 0] }] },
+      0,
     ],
   };
+
+  // If totalFreight is explicitly provided (non-zero), prefer it. Otherwise compute.
+  const revenueExpr = {
+    $cond: [
+      { $gt: [{ $ifNull: ["$totalFreight", 0] }, 0] },
+      { $ifNull: ["$totalFreight", 0] },
+      computedRevenueExpr,
+    ],
+  };
+
+  const shortageTonsExpr = { $ifNull: ["$shortageTons", 0] };
 
   const shortageCostExpr = {
     $multiply: [shortageTonsExpr, { $ifNull: ["$ratePerTon", 0] }],
@@ -19,9 +32,9 @@ export function buildComputedFieldsStage() {
 
   const explicitExpensesExpr = {
     $add: [
-      { $ifNull: ["$expenses.cash", 0] },
-      { $ifNull: ["$expenses.diesel", 0] },
-      { $ifNull: ["$expenses.other", 0] },
+      { $ifNull: ["$cash", 0] },
+      { $ifNull: ["$diesel", 0] },
+      { $ifNull: ["$otherExpenses", 0] },
     ],
   };
 

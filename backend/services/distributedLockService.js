@@ -53,7 +53,10 @@ export async function withMongoLock({ key, ttlMs, autoRenewIntervalMs }, fn) {
         void DistributedLock.updateOne(
           { key, owner: OWNER },
           { $set: { lockedUntil: newLockedUntil } }
-        );
+        ).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error("[lock] Auto-renew failed:", err);
+        });
       }, renewEveryMs);
     }
 
@@ -61,6 +64,11 @@ export async function withMongoLock({ key, ttlMs, autoRenewIntervalMs }, fn) {
     return { ran: true, result };
   } finally {
     if (renewTimer) clearInterval(renewTimer);
-    await DistributedLock.updateOne({ key, owner: OWNER }, { $set: { lockedUntil: new Date(0) } });
+    try {
+      await DistributedLock.updateOne({ key, owner: OWNER }, { $set: { lockedUntil: new Date(0) } });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[lock] Release failed:", err);
+    }
   }
 }

@@ -38,7 +38,7 @@ function buildGenericTripDateRange(dateRange) {
   if (to) q.$lte = to;
 
   return {
-    $or: [{ "loading.date": q }, { "unloading.date": q }],
+    $or: [{ loadingDate: q }, { unloadingDate: q }],
   };
 }
 
@@ -72,6 +72,12 @@ export function buildMatchFromFilters(filters) {
   const invoiceNumber = normalizeToken(f.invoiceNumber);
   if (invoiceNumber) match.invoiceNumber = invoiceNumber;
 
+  const deliveryNumber = normalizeToken(f.deliveryNumber);
+  if (deliveryNumber) match.deliveryNumber = { $regex: escapeRegex(deliveryNumber), $options: "i" };
+
+  const tripNumber = normalizeToken(f.tripNumber);
+  if (tripNumber) match.tripNumber = { $regex: escapeRegex(tripNumber), $options: "i" };
+
   const chassisNumber = normalizeToken(f.chassisNumber);
   if (chassisNumber) match.chassisNumber = chassisNumber;
 
@@ -80,14 +86,27 @@ export function buildMatchFromFilters(filters) {
     match.partyName = { $regex: escapeRegex(partyName), $options: "i" };
   }
 
+  // Unified party filter (dynamic dropdown):
+  // - If value is TPT/LOGISTICS/OTHER => filter by partyType
+  // - Else => filter by partyName
+  const party = normalizeToken(f.party);
+  if (party) {
+    const p = party.toUpperCase();
+    if (p === "TPT" || p === "LOGISTICS" || p === "OTHER") {
+      match.partyType = p;
+    } else {
+      match.partyName = { $regex: escapeRegex(party), $options: "i" };
+    }
+  }
+
   const loadingPoint = normalizeToken(f.loadingPoint);
   if (loadingPoint) {
-    match["loading.location.name"] = { $regex: escapeRegex(loadingPoint), $options: "i" };
+    match.loadingPoint = { $regex: escapeRegex(loadingPoint), $options: "i" };
   }
 
   const unloadingPoint = normalizeToken(f.unloadingPoint);
   if (unloadingPoint) {
-    match["unloading.location.name"] = { $regex: escapeRegex(unloadingPoint), $options: "i" };
+    match.unloadingPoint = { $regex: escapeRegex(unloadingPoint), $options: "i" };
   }
 
   const vehicleNumberInput = normalizeToken(f.vehicleNumber);
@@ -127,12 +146,12 @@ export function buildMatchFromFilters(filters) {
   if (partyType) match.partyType = partyType;
 
   const bookNumber = normalizeToken(f.bookNumber);
-  if (bookNumber) match.bookNumber = bookNumber;
+  if (bookNumber) match.marketVehicleBookNumber = bookNumber;
 
-  const loadingRange = buildDateRangeQuery("loading.date", f.dateRange);
+  const loadingRange = buildDateRangeQuery("loadingDate", f.dateRange);
   if (loadingRange) Object.assign(match, loadingRange);
 
-  const unloadingRange = buildDateRangeQuery("unloading.date", f.unloadingDateRange);
+  const unloadingRange = buildDateRangeQuery("unloadingDate", f.unloadingDateRange);
   if (unloadingRange) Object.assign(match, unloadingRange);
 
   const genericTripRange = buildGenericTripDateRange(f.tripDateRange);
@@ -146,8 +165,8 @@ export function buildMatchFromFilters(filters) {
     const startYear = Number.isFinite(year) ? year : new Date().getUTCFullYear();
     const start = new Date(Date.UTC(startYear, month - 1, 1));
     const end = new Date(Date.UTC(startYear, month, 1));
-    match["loading.date"] = {
-      ...(match["loading.date"] || {}),
+    match.loadingDate = {
+      ...(match.loadingDate || {}),
       $gte: start,
       $lt: end,
     };
@@ -160,7 +179,7 @@ export function buildMatchFromFilters(filters) {
   return match;
 }
 
-export async function searchTrips(filters, { sort = { "loading.date": -1 }, limit = 500, skip = 0 } = {}) {
+export async function searchTrips(filters, { sort = { loadingDate: -1 }, limit = 500, skip = 0 } = {}) {
   const match = buildMatchFromFilters(filters);
 
   const pipeline = [

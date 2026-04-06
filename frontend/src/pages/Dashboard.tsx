@@ -1,19 +1,23 @@
 import { SummaryCard } from "@/components/SummaryCard";
-import { TripTable } from "@/components/TripTable";
+import { ExcelTripTable } from "@/components/ExcelTripTable";
 import { Truck, IndianRupee, TrendingUp, BarChart3 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ApiError, getDashboard, toUiTrip } from "@/services/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { adminRunSheetSyncNow, ApiError, getDashboard, toUiTrip } from "@/services/api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAuth } from "@/auth/AuthContext";
+import { toast } from "@/hooks/use-toast";
 
 export default function Dashboard() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
   const now = new Date();
   const [month, setMonth] = useState<number>(now.getUTCMonth() + 1);
   const [year, setYear] = useState<number>(now.getUTCFullYear());
 
-  const maxRows = 150;
+  const maxRows = 1000;
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["dashboard", month, year],
@@ -32,6 +36,26 @@ export default function Dashboard() {
   const totalProfit = data?.summary?.totalProfit ?? 0;
 
   const isInitialLoading = (isLoading || isFetching) && !data;
+
+  const runSheetSync = useMutation({
+    mutationFn: adminRunSheetSyncNow,
+    onSuccess: () => {
+      toast({
+        title: "Sync started",
+        description: "Google Sheet sync is running. Refresh in a moment.",
+      });
+    },
+    onError: (err) => {
+      toast({
+        title: "Unable to start sync",
+        description: err instanceof Error ? err.message : "Request failed",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
 
   const years = useMemo(() => {
     const y = new Date().getUTCFullYear();
@@ -164,14 +188,21 @@ export default function Dashboard() {
       <div>
         <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
           <h2 className="text-lg font-display font-semibold">Trips</h2>
+          <div className="flex items-center gap-2">
+            {user?.role === "ADMIN" && (
+              <Button variant="outline" size="sm" disabled={runSheetSync.isPending} onClick={() => runSheetSync.mutate()}>
+                {runSheetSync.isPending ? "Syncing…" : "Sync now"}
+              </Button>
+            )}
           {(isLoading || isFetching) && <span className="text-xs text-muted-foreground">Loading…</span>}
           {isError && (
             <span className="text-xs text-destructive">
               {error instanceof Error ? error.message : "Failed to load"}
             </span>
           )}
+          </div>
         </div>
-        <TripTable trips={recentTrips} />
+        <ExcelTripTable trips={recentTrips} />
       </div>
       )}
     </div>

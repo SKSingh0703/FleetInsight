@@ -8,6 +8,20 @@ import {
 import { MapPin, Calendar, Weight, IndianRupee, CircleDot } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { ElementType } from "react";
+import { useState } from "react";
+import { useAuth } from "@/auth/AuthContext";
+import { adminDeleteTrip } from "@/services/api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 function formatUnknown(value: unknown): string {
   if (value == null) return "";
@@ -95,24 +109,57 @@ interface TripDetailModalProps {
 }
 
 export function TripDetailModal({ trip, open, onClose }: TripDetailModalProps) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const isAdmin = user?.role === "ADMIN";
+
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+
+  const deleteMutation = useMutation({
+    mutationFn: (tripId: string) => adminDeleteTrip(tripId),
+    onSuccess: async () => {
+      setConfirmDeleteOpen(false);
+      onClose();
+      const removedId = deleteMutation.variables;
+      if (removedId) {
+        qc.setQueriesData({ queryKey: ["search"], exact: false }, (old) => {
+          const o = old as { summary?: unknown; trips?: Array<Record<string, unknown>> } | undefined;
+          if (!o || !Array.isArray(o.trips)) return old;
+          return {
+            ...o,
+            trips: o.trips.filter((t) => String((t as { _id?: unknown })?._id || "") !== removedId),
+          };
+        });
+
+        qc.setQueriesData({ queryKey: ["dashboard"], exact: false }, (old) => {
+          const o = old as { summary?: unknown; trips?: Array<Record<string, unknown>> } | undefined;
+          if (!o || !Array.isArray(o.trips)) return old;
+          return {
+            ...o,
+            trips: o.trips.filter((t) => String((t as { _id?: unknown })?._id || "") !== removedId),
+          };
+        });
+      }
+
+      await qc.invalidateQueries({ queryKey: ["search"], exact: false });
+      await qc.invalidateQueries({ queryKey: ["dashboard"], exact: false });
+    },
+  });
+
   if (!trip) return null;
 
   const raw = trip.raw;
-  const extensions = (raw?.extensions || {}) as Record<string, unknown>;
+  const tripId = typeof raw?._id === "string" ? raw._id : raw?._id ? String(raw._id) : "";
   const sheetRaw = (raw?.sheet?.raw || {}) as Record<string, unknown>;
-  const sheetNormalized = (raw?.sheet?.normalized || {}) as Record<string, unknown>;
-  const unloadingWeightAssumed = extensions.unloadingWeightAssumed === true;
 
   const rawRows = toKeyValueRows(sheetRaw);
-  const normalizedRows = toKeyValueRows(sheetNormalized);
   const rawFilled = splitRowsByValue(rawRows).filled;
-  const normalizedFilled = splitRowsByValue(normalizedRows).filled;
-  const primarySheetRows = rawFilled.length > 0 ? rawFilled : normalizedFilled;
+  const primarySheetRows = rawFilled;
 
-  const loadingWeightTons = raw?.loading?.weightTons;
-  const unloadingWeightTons = raw?.unloading?.weightTons;
-  const shortageTons = raw?.computed?.shortageTons;
-  const totalFreight = raw?.computed?.revenue;
+  const loadingWeightTons = raw?.loadingWeightTons;
+  const unloadingWeightTons = raw?.unloadingWeightTons;
+  const shortageTons = raw?.shortageTons ?? raw?.computed?.shortageTons;
+  const totalFreight = raw?.totalFreight ?? raw?.computed?.revenue;
 
   const computedShortageTons =
     isFiniteNumber(loadingWeightTons) && isFiniteNumber(unloadingWeightTons)
@@ -141,6 +188,18 @@ export function TripDetailModal({ trip, open, onClose }: TripDetailModalProps) {
         </DialogHeader>
 
         <div className="space-y-5">
+          {isAdmin && tripId && (
+            <div className="flex items-center justify-end">
+              <button
+                type="button"
+                className="text-xs text-destructive hover:underline disabled:opacity-50"
+                disabled={deleteMutation.isPending}
+                onClick={() => setConfirmDeleteOpen(true)}
+              >
+                Delete record
+              </button>
+            </div>
+          )}
           {/* Route */}
           <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
             <MapPin className="h-4 w-4 text-primary shrink-0" />
@@ -173,7 +232,7 @@ export function TripDetailModal({ trip, open, onClose }: TripDetailModalProps) {
               <DetailItem
                 icon={Weight}
                 label="Unloading Wt"
-                value={`${formatTonnes(unloadingWeightTons)}${unloadingWeightAssumed ? " (assumed)" : ""}`}
+                value={`${formatTonnes(unloadingWeightTons)}`}
               />
             )}
             {isFiniteNumber(effectiveShortageTons) && effectiveShortageTons > 0 && (
@@ -217,7 +276,7 @@ export function TripDetailModal({ trip, open, onClose }: TripDetailModalProps) {
             </div>
           </div>
 
-          {(Object.keys(sheetRaw).length > 0 || Object.keys(sheetNormalized).length > 0) && (
+          {Object.keys(sheetRaw).length > 0 && (
             <details className="rounded-lg border p-4">
               <summary className="cursor-pointer text-sm font-semibold font-display">Full Entry</summary>
               <div className="mt-3 space-y-4">
@@ -227,16 +286,35 @@ export function TripDetailModal({ trip, open, onClose }: TripDetailModalProps) {
                     <KeyValueTableSplit rows={rawRows} />
                   </div>
                 )}
-                {Object.keys(sheetNormalized).length > 0 && (
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Normalized (future-proof keys)</p>
-                    <KeyValueTableSplit rows={normalizedRows} />
-                  </div>
-                )}
               </div>
             </details>
           )}
         </div>
+
+        <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete trip record?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete the record. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={deleteMutation.isPending || !tripId}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (!tripId) return;
+                  deleteMutation.mutate(tripId);
+                }}
+              >
+                {deleteMutation.isPending ? "Deleting…" : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );

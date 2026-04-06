@@ -225,7 +225,13 @@ export async function runSheetSyncOnce() {
           continue;
         }
 
-        changedRawRows.push({ sheetName: r.sheetName, rowNumber: r.rowNumber, raw: r.raw });
+        changedRawRows.push({
+          spreadsheetId,
+          tabName,
+          sheetName: r.sheetName,
+          rowNumber: r.rowNumber,
+          raw: r.raw,
+        });
       }
 
       let upsertStats = { requested: 0, matched: 0, modified: 0, upserted: 0 };
@@ -233,7 +239,19 @@ export async function runSheetSyncOnce() {
 
       if (changedRawRows.length > 0) {
         const { trips, errors } = await processRows(changedRawRows);
-        rejected = Array.isArray(errors) ? errors.length : 0;
+        const errorList = Array.isArray(errors) ? errors : [];
+        rejected = errorList.length;
+
+        // Important: do NOT permanently mark rejected rows as "synced".
+        // If we store the row hash here, future syncs won't retry the row unless the sheet changes.
+        // By clearing the hash for rejected rows, we ensure they are retried on the next run.
+        for (const e of errorList) {
+          const rn = e && typeof e === "object" && "rowNumber" in e ? Number(e.rowNumber) : NaN;
+          if (Number.isFinite(rn) && rn > 0) {
+            delete rowHashes[String(Math.trunc(rn))];
+          }
+        }
+
         upsertStats = await saveTrips(trips);
       }
 

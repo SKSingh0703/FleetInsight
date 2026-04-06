@@ -29,13 +29,24 @@ export async function saveTrips(trips) {
   const ops = docs.map((trip) => {
     const cleaned = removeUndefinedDeep(trip);
     const { tripKey, ...rest } = cleaned;
-    const hasInvoice = typeof cleaned.invoiceNumber === "string" && cleaned.invoiceNumber.trim().length > 0;
+
+    const spreadsheetId =
+      cleaned?.sheet && typeof cleaned.sheet.spreadsheetId === "string" ? cleaned.sheet.spreadsheetId.trim() : "";
+    const tabName =
+      cleaned?.sheet && typeof cleaned.sheet.tabName === "string" ? cleaned.sheet.tabName.trim() : "";
+
+    const hasSno = typeof cleaned.sno === "string" && cleaned.sno.trim().length > 0;
+    const scope = {
+      ...(spreadsheetId ? { "sheet.spreadsheetId": spreadsheetId } : {}),
+      ...(tabName ? { "sheet.tabName": tabName } : {}),
+    };
+
+    const filter = hasSno ? { ...scope, sno: cleaned.sno } : { tripKey };
+
     return {
       updateOne: {
-        filter: hasInvoice ? { invoiceNumber: cleaned.invoiceNumber } : { tripKey },
-        update: hasInvoice
-          ? { $set: rest, $setOnInsert: { tripKey } }
-          : { $set: cleaned },
+        filter,
+        update: { $set: rest, $setOnInsert: { tripKey } },
         upsert: true,
       },
     };
@@ -66,10 +77,20 @@ export async function saveTrips(trips) {
     for (const trip of docs) {
       const cleaned = removeUndefinedDeep(trip);
       const { tripKey, ...rest } = cleaned;
-      const hasInvoice = typeof cleaned.invoiceNumber === "string" && cleaned.invoiceNumber.trim().length > 0;
 
-      const filter = hasInvoice ? { invoiceNumber: cleaned.invoiceNumber } : { tripKey };
-      const update = hasInvoice ? { $set: rest, $setOnInsert: { tripKey } } : { $set: cleaned };
+      const spreadsheetId =
+        cleaned?.sheet && typeof cleaned.sheet.spreadsheetId === "string" ? cleaned.sheet.spreadsheetId.trim() : "";
+      const tabName =
+        cleaned?.sheet && typeof cleaned.sheet.tabName === "string" ? cleaned.sheet.tabName.trim() : "";
+
+      const hasSno = typeof cleaned.sno === "string" && cleaned.sno.trim().length > 0;
+      const scope = {
+        ...(spreadsheetId ? { "sheet.spreadsheetId": spreadsheetId } : {}),
+        ...(tabName ? { "sheet.tabName": tabName } : {}),
+      };
+
+      const filter = hasSno ? { ...scope, sno: cleaned.sno } : { tripKey };
+      const update = { $set: rest, $setOnInsert: { tripKey } };
 
       try {
         const r = await Trip.updateOne(filter, update, { upsert: true });

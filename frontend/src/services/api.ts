@@ -5,41 +5,49 @@ export type Summary = {
   totalProfit: number;
 };
 
-export type ApiLocation = {
-  name?: string;
-};
-
-export type ApiMovement = {
-  date: string;
-  location?: ApiLocation;
-  weightTons: number;
-};
-
 export type ApiTrip = {
   _id?: string;
   tripKey?: string;
+  sno?: string;
   invoiceNumber?: string;
-  chassisNumber: string;
-  vehicleNumber: string;
+  deliveryNumber?: string;
+  chassisNumber?: string;
+  vehicleNumber?: string;
   vehicleSuffix?: string;
   tripType: "OWN" | "MARKET";
-  bookNumber?: string;
+  tripNumber?: string;
+  marketVehicleBookNumber?: string;
   partyType: "TPT" | "LOGISTICS" | "OTHER";
   partyName?: string;
-  loading: ApiMovement;
-  unloading: ApiMovement;
-  ratePerTon: number;
-  expenses?: {
-    cash?: number;
-    diesel?: number;
-    other?: number;
-  };
-  extensions?: Record<string, unknown>;
+  loadingDate?: string;
+  unloadingDate?: string;
+  challanDate?: string;
+  loadingPoint?: string;
+  unloadingPoint?: string;
+  loadingWeightTons?: number;
+  unloadingWeightTons?: number;
+  shortageTons?: number;
+  ratePerTon?: number;
+  totalFreight?: number;
+  cash?: number;
+  cardAccount?: string;
+  cashDate?: string;
+  diesel?: number;
+  pumpCard?: string;
+  dieselDate?: string;
+  fastag?: number;
+  fastagDate?: string;
+  totalAdvance?: number;
+  otherExpenses?: number;
+  billBookNumber?: string;
+  marketPaymentDate?: string;
+  remarks?: string;
+  tripStatus?: string;
   sheet?: {
-    sheetName?: string;
+    spreadsheetId?: string;
+    tabName?: string;
     rowNumber?: number;
     raw?: Record<string, unknown>;
-    normalized?: Record<string, unknown>;
   };
   computed?: {
     revenue?: number;
@@ -54,9 +62,12 @@ export type SearchFilters = {
   tripKey?: string;
   vehicleNumber?: string;
   invoiceNumber?: string;
+  deliveryNumber?: string;
+  tripNumber?: string;
   chassisNumber?: string;
   bookNumber?: string;
   partyName?: string;
+  party?: string;
   loadingPoint?: string;
   unloadingPoint?: string;
   tripType?: "OWN" | "MARKET" | "";
@@ -314,25 +325,29 @@ function toIsoDateOnly(value?: string) {
 }
 
 export function toUiTrip(t: ApiTrip): UiTrip {
-  const unloadingDate = toIsoDateOnly(t.unloading?.date);
-  const loadingDate = toIsoDateOnly(t.loading?.date);
+  const unloadingDate = toIsoDateOnly(t.unloadingDate);
+  const loadingDate = toIsoDateOnly(t.loadingDate);
   const date = unloadingDate || loadingDate;
 
-  const loadingWeightTons = Number(t.loading?.weightTons ?? 0);
-  const unloadingWeightTons = Number(t.unloading?.weightTons ?? 0);
+  const loadingWeightTons = Number(t.loadingWeightTons ?? 0);
+  const unloadingWeightTons = Number(t.unloadingWeightTons ?? 0);
   const shortageTons = Number(
-    t.computed?.shortageTons ??
+    t.shortageTons ??
+      t.computed?.shortageTons ??
       (Number.isFinite(loadingWeightTons) && Number.isFinite(unloadingWeightTons) ? loadingWeightTons - unloadingWeightTons : 0),
   );
 
+  const hasExplicitTotalFreight = typeof t.totalFreight === "number" && Number.isFinite(t.totalFreight) && t.totalFreight > 0;
   const totalFreight = Number(
-    t.computed?.revenue ??
-      (Number.isFinite(unloadingWeightTons) ? unloadingWeightTons * Number(t.ratePerTon ?? 0) : 0),
+    hasExplicitTotalFreight
+      ? t.totalFreight
+      : t.computed?.revenue ??
+        (Number.isFinite(unloadingWeightTons) ? unloadingWeightTons * Number(t.ratePerTon ?? 0) : 0),
   );
 
   const income = Number(t.computed?.revenue ?? 0);
-  const diesel = Number(t.expenses?.diesel ?? 0);
-  const otherExpenses = Number((t.expenses?.cash ?? 0) + (t.expenses?.other ?? 0));
+  const diesel = Number(t.diesel ?? 0);
+  const otherExpenses = Number((t.cash ?? 0) + (t.otherExpenses ?? 0));
   const totalExpenses = Number(t.computed?.totalExpenses ?? diesel + otherExpenses);
   const profit = Number(t.computed?.profit ?? income - totalExpenses);
 
@@ -340,21 +355,21 @@ export function toUiTrip(t: ApiTrip): UiTrip {
     id: t._id || t.tripKey || t.invoiceNumber,
     tripKey: t.tripKey || "",
     invoiceNumber: t.invoiceNumber || "",
-    bookNumber: t.bookNumber || "",
+    bookNumber: t.marketVehicleBookNumber || "",
     chassisNumber: t.chassisNumber || "",
     vehicleNumber: t.vehicleNumber || "",
     date,
     loadingDate,
     unloadingDate,
-    loadingPoint: t.loading?.location?.name || "",
-    unloadingPoint: t.unloading?.location?.name || "",
+    loadingPoint: t.loadingPoint || "",
+    unloadingPoint: t.unloadingPoint || "",
     tripType: t.tripType,
     partyType: t.partyType,
     partyName: t.partyName || "UNKNOWN",
     loadingWeightTons,
     unloadingWeightTons,
     shortageTons,
-    weight: Number(t.unloading?.weightTons ?? 0),
+    weight: unloadingWeightTons,
     rate: Number(t.ratePerTon ?? 0),
     totalFreight,
     income: totalFreight,
@@ -484,6 +499,48 @@ export function postAuthGoogle(credential: string): Promise<AuthResponse> {
   });
 }
 
+export function getPartyOptions(signal?: AbortSignal): Promise<{ options: string[] }> {
+  return requestJson<{ options: string[] }>("/api/party-options", {
+    method: "GET",
+    ...(signal ? { signal } : {}),
+  });
+}
+
+export function getPartyNameOptions(signal?: AbortSignal): Promise<{ options: string[] }> {
+  return requestJson<{ options: string[] }>("/api/party-name-options", {
+    method: "GET",
+    ...(signal ? { signal } : {}),
+  });
+}
+
+export function getLoadingPointOptions(signal?: AbortSignal): Promise<{ options: string[] }> {
+  return requestJson<{ options: string[] }>("/api/loading-point-options", {
+    method: "GET",
+    ...(signal ? { signal } : {}),
+  });
+}
+
+export function getUnloadingPointOptions(signal?: AbortSignal): Promise<{ options: string[] }> {
+  return requestJson<{ options: string[] }>("/api/unloading-point-options", {
+    method: "GET",
+    ...(signal ? { signal } : {}),
+  });
+}
+
+export function getChassisNumberOptions(signal?: AbortSignal): Promise<{ options: string[] }> {
+  return requestJson<{ options: string[] }>("/api/chassis-number-options", {
+    method: "GET",
+    ...(signal ? { signal } : {}),
+  });
+}
+
+export function getBookNumberOptions(signal?: AbortSignal): Promise<{ options: string[] }> {
+  return requestJson<{ options: string[] }>("/api/book-number-options", {
+    method: "GET",
+    ...(signal ? { signal } : {}),
+  });
+}
+
 export function getMe(): Promise<{ user: AuthUser }> {
   return requestJson<{ user: AuthUser }>("/api/auth/me", { method: "GET" });
 }
@@ -516,6 +573,12 @@ export function adminMakeAdmin(userId: string): Promise<{ user: AuthUser }> {
 
 export function adminRemoveUser(userId: string): Promise<{ removed: boolean }> {
   return requestJson<{ removed: boolean }>(`/api/admin/remove/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function adminDeleteTrip(tripId: string): Promise<{ message: string }> {
+  return requestJson<{ message: string }>(`/api/trips/${encodeURIComponent(tripId)}`, {
     method: "DELETE",
   });
 }
@@ -562,4 +625,12 @@ export function adminRunSheetSyncNow(): Promise<{ result: unknown }> {
 
 export function adminListSheetSyncRuns(): Promise<{ runs: SheetSyncRun[] }> {
   return requestJson<{ runs: SheetSyncRun[] }>("/api/admin/sheetsync/runs", { method: "GET" });
+}
+
+export function getDeliveryNumberOptions(signal?: AbortSignal): Promise<{ options: string[] }> {
+  return requestJson<{ options: string[] }>("/api/delivery-number-options", { method: "GET", signal });
+}
+
+export function getTripNumberOptions(signal?: AbortSignal): Promise<{ options: string[] }> {
+  return requestJson<{ options: string[] }>("/api/trip-number-options", { method: "GET", signal });
 }

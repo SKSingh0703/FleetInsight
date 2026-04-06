@@ -10,6 +10,26 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadDir = path.join(__dirname, "uploads");
 
+function isTransientNetworkError(err) {
+  const code = err && typeof err === "object" && "code" in err ? err.code : undefined;
+  return code === "ECONNRESET" || code === "ECONNABORTED" || code === "ETIMEDOUT";
+}
+
+process.on("unhandledRejection", (reason) => {
+  // eslint-disable-next-line no-console
+  console.error("[process] Unhandled rejection:", reason);
+  // Keep process alive for transient network blips (Mongo/Google).
+  // Most of our background jobs already retry/backoff; this is a last-resort safeguard.
+  if (isTransientNetworkError(reason)) return;
+});
+
+process.on("uncaughtException", (err) => {
+  // eslint-disable-next-line no-console
+  console.error("[process] Uncaught exception:", err);
+  // For truly uncaught exceptions, the process may be in an unknown state.
+  // Still avoid hard crash loops; nodemon can restart if needed.
+});
+
 async function ensureUploadDirAndCleanup() {
   try {
     await fs.mkdir(uploadDir, { recursive: true });

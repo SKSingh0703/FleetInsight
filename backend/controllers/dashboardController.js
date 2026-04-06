@@ -17,7 +17,7 @@ function buildMonthMatch({ month, year }) {
   const y = Number.isFinite(year) ? year : new Date().getUTCFullYear();
   const start = new Date(Date.UTC(y, month - 1, 1));
   const end = new Date(Date.UTC(y, month, 1));
-  return { "loading.date": { $gte: start, $lt: end } };
+  return { loadingDate: { $gte: start, $lt: end } };
 }
 
 function cacheKey({ month, year, limit }) {
@@ -50,23 +50,46 @@ export async function getDashboard(req, res) {
       $facet: {
         summary: [buildSummaryGroupStage(), buildSummaryProjectStage()],
         trips: [
-          { $sort: { "loading.date": -1 } },
+          { $sort: { loadingDate: -1 } },
           ...(limit > 0 ? [{ $limit: limit }] : []),
           {
             $project: {
               tripKey: 1,
+              sno: 1,
               invoiceNumber: 1,
+              deliveryNumber: 1,
               chassisNumber: 1,
               vehicleNumber: 1,
               vehicleSuffix: 1,
               tripType: 1,
-              bookNumber: 1,
+              marketVehicleBookNumber: 1,
               partyType: 1,
               partyName: 1,
-              loading: 1,
-              unloading: 1,
+              tripNumber: 1,
+              loadingDate: 1,
+              unloadingDate: 1,
+              challanDate: 1,
+              loadingPoint: 1,
+              unloadingPoint: 1,
+              loadingWeightTons: 1,
+              unloadingWeightTons: 1,
+              shortageTons: 1,
               ratePerTon: 1,
-              expenses: 1,
+              totalFreight: 1,
+              cash: 1,
+              cardAccount: 1,
+              cashDate: 1,
+              diesel: 1,
+              pumpCard: 1,
+              dieselDate: 1,
+              fastag: 1,
+              fastagDate: 1,
+              totalAdvance: 1,
+              otherExpenses: 1,
+              billBookNumber: 1,
+              marketPaymentDate: 1,
+              remarks: 1,
+              tripStatus: 1,
               computed: 1,
               sheet: 1,
             },

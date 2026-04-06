@@ -29,7 +29,13 @@ export async function parseFile(filePath) {
     for (let i = 0; i < rows.length; i += 1) {
       const row = rows[i];
       if (isRowEmpty(row)) continue;
-      rawRows.push({ sheetName, rowNumber: i + 2, raw: row });
+      rawRows.push({
+        spreadsheetId: "UPLOAD",
+        tabName: sheetName,
+        sheetName,
+        rowNumber: i + 2,
+        raw: row,
+      });
     }
   }
 

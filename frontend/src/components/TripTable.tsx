@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { UiTrip as Trip } from "@/services/api";
 import { TripDetailModal } from "@/components/TripDetailModal";
 import { ArrowUpDown } from "lucide-react";
+import { useAuth } from "@/auth/AuthContext";
 
 interface TripTableProps {
   trips: Trip[];
@@ -11,6 +12,8 @@ export function TripTable({ trips }: TripTableProps) {
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
   const [sortKey, setSortKey] = useState<keyof Trip>("date");
   const [sortAsc, setSortAsc] = useState(false);
+  const { user } = useAuth();
+  const isAdmin = user?.role === "ADMIN";
 
   const sorted = [...trips].sort((a, b) => {
     const av = a[sortKey];

@@ -7,6 +7,8 @@ import authRoutes from "./authRoutes.js";
 import adminRoutes from "./adminRoutes.js";
 import sheetSyncRoutes from "./sheetSyncRoutes.js";
 import tripRoutes from "./tripRoutes.js";
+import driveSyncRoutes from "./driveSyncRoutes.js";
+import paymentAdviceRoutes from "./paymentAdviceRoutes.js";
 
 const router = express.Router();
 
@@ -17,6 +19,7 @@ router.use(searchRoutes);
 router.use(adminRoutes);
 router.use(sheetSyncRoutes);
 router.use(tripRoutes);
+router.use(driveSyncRoutes);
+router.use(paymentAdviceRoutes);
 
 export default router;
-

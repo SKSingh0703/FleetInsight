@@ -1,14 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminApproveUser,
+  adminGetDriveSyncStatus,
   adminGetSheetSyncStatus,
   adminListUsers,
   adminMakeAdmin,
   adminRejectUser,
   adminRemoveUser,
+  adminRunDriveSyncNow,
+  adminAddDriveSyncRoot,
+  adminDeleteDriveSyncRoot,
   adminRunSheetSyncNow,
   adminSuggestSheetSyncTabs,
   adminUpsertSheetSyncConfig,
+  getAnnexureRecords,
   ApiError,
 } from "@/services/api";
 import { Button } from "@/components/ui/button";
@@ -44,6 +49,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
 import { useEffect, useMemo, useState } from "react";
 
@@ -81,6 +87,83 @@ export default function AdminPage() {
   const [sheetDefaultHeaderRow, setSheetDefaultHeaderRow] = useState(1);
   const [manualTabCurrent, setManualTabCurrent] = useState("");
   const [manualTabPrevious, setManualTabPrevious] = useState("");
+  const [annexureSearch, setAnnexureSearch] = useState("");
+  const [annexurePage, setAnnexurePage] = useState(1);
+  const [selectedRawRecord, setSelectedRawRecord] = useState<any | null>(null);
+
+  const [newRootUrl, setNewRootUrl] = useState("");
+  const [newRootName, setNewRootName] = useState("");
+  const [newRootFy, setNewRootFy] = useState("");
+
+  const addRootMutation = useMutation({
+    mutationFn: adminAddDriveSyncRoot,
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["driveSyncStatus"] });
+      setNewRootUrl("");
+      setNewRootName("");
+      setNewRootFy("");
+      toast({
+        title: "Root Drive Folder Added",
+        description: data.message,
+      });
+    },
+    onError: (err) => {
+      toast({
+        title: "Failed to add Drive Folder",
+        description: getApiErrorMessage(err),
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteRootMutation = useMutation({
+    mutationFn: adminDeleteDriveSyncRoot,
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["driveSyncStatus"] });
+      toast({
+        title: "Root Folder Removed",
+        description: data.message,
+      });
+    },
+  });
+
+  const driveStatus = useQuery({
+    queryKey: ["driveSyncStatus"],
+    queryFn: adminGetDriveSyncStatus,
+    placeholderData: (prev) => prev,
+    retry: 1,
+    retryDelay: 800,
+  });
+
+  const annexuresQuery = useQuery({
+    queryKey: ["annexures", annexurePage, annexureSearch],
+    queryFn: ({ signal }) =>
+      getAnnexureRecords({ page: annexurePage, limit: 50, search: annexureSearch, signal }),
+    placeholderData: (prev) => prev,
+    retry: 1,
+    retryDelay: 800,
+  });
+
+  const runDriveSync = useMutation({
+    mutationFn: adminRunDriveSyncNow,
+    onSuccess: () => {
+      toast({
+        title: "Drive scan & extraction completed",
+        description: "Google Drive bill folders scanned and annexures extracted.",
+      });
+    },
+    onError: (err) => {
+      toast({
+        title: "Drive sync issue",
+        description: getApiErrorMessage(err),
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["driveSyncStatus"] });
+      qc.invalidateQueries({ queryKey: ["annexures"] });
+    },
+  });
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["adminUsers"],
@@ -265,6 +348,7 @@ export default function AdminPage() {
         <TabsList>
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="sheets">Sheets Sync</TabsTrigger>
+          <TabsTrigger value="drive">Drive Bills & Annexures</TabsTrigger>
         </TabsList>
 
         <TabsContent value="users">
@@ -577,6 +661,364 @@ export default function AdminPage() {
                 </CardContent>
               </Card>
             </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="drive">
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-xl">Google Drive Bill Folder Scanner</CardTitle>
+                    <CardDescription>
+                      Recursively scans all connected Google Drive root folders, detects Bill Folders, and extracts Annexure sheets into structured database records.
+                    </CardDescription>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="secondary"
+                      disabled={runDriveSync.isPending}
+                      onClick={() => runDriveSync.mutate()}
+                    >
+                      {runDriveSync.isPending ? "Scanning & Extracting…" : "Scan All Connected Drives Now"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={driveStatus.isFetching}
+                      onClick={() => {
+                        qc.invalidateQueries({ queryKey: ["driveSyncStatus"] });
+                        qc.invalidateQueries({ queryKey: ["annexures"] });
+                      }}
+                    >
+                      Refresh Status
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {driveStatus.error && (
+                  <Alert variant="destructive" className="mb-4">
+                    <AlertTitle>Drive Scanner Notice</AlertTitle>
+                    <AlertDescription>
+                      <div className="space-y-2">
+                        <div>
+                          {getApiErrorMessage(driveStatus.error)}
+                        </div>
+                        {getApiErrorMessage(driveStatus.error).includes("Google Drive API is disabled") && (
+                          <div className="text-xs mt-2 bg-destructive/10 p-3 rounded border border-destructive/20 space-y-1">
+                            <p className="font-semibold">Action Required:</p>
+                            <p>Enable the Google Drive API for your Google Cloud project (ID: 242773855902) using this direct link:</p>
+                            <a
+                              href="https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=242773855902"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="underline font-mono text-xs font-bold hover:text-white"
+                            >
+                              Enable Google Drive API in GCP Console ↗
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                  <div className="rounded-lg border p-3 bg-muted/20">
+                    <div className="text-xs text-muted-foreground">Total Folders</div>
+                    <div className="text-lg font-bold">{driveStatus.data?.stats?.totalFolders ?? 0}</div>
+                  </div>
+                  <div className="rounded-lg border p-3 bg-muted/20">
+                    <div className="text-xs text-muted-foreground">Bill Folders</div>
+                    <div className="text-lg font-bold text-primary">{driveStatus.data?.stats?.totalBillFolders ?? 0}</div>
+                  </div>
+                  <div className="rounded-lg border p-3 bg-muted/20">
+                    <div className="text-xs text-muted-foreground">Total Files</div>
+                    <div className="text-lg font-bold">{driveStatus.data?.stats?.totalFiles ?? 0}</div>
+                  </div>
+                  <div className="rounded-lg border p-3 bg-muted/20">
+                    <div className="text-xs text-muted-foreground">Annexure Files</div>
+                    <div className="text-lg font-bold text-amber-600 dark:text-amber-400">
+                      {driveStatus.data?.stats?.annexureCandidates ?? 0}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border p-3 bg-muted/20">
+                    <div className="text-xs text-muted-foreground">Processed Files</div>
+                    <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
+                      {driveStatus.data?.stats?.annexuresProcessed ?? 0}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border p-3 bg-muted/20">
+                    <div className="text-xs text-muted-foreground">Extracted Rows</div>
+                    <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                      {driveStatus.data?.stats?.totalRowsExtracted ?? 0}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Modular Connected Root Drive Folders Card */}
+            <Card>
+              <CardHeader className="py-4">
+                <CardTitle className="text-base">Connected Root Google Drive Folders</CardTitle>
+                <CardDescription className="text-xs">
+                  Modular Google Drive Root Folders scanned for Bill Annexures. You can add root folders for different financial years or teams.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* List of Connected Roots */}
+                <div className="overflow-x-auto rounded-lg border">
+                  <Table className="text-xs">
+                    <TableHeader className="bg-muted/40">
+                      <TableRow>
+                        <TableHead className="py-2 font-bold">Drive Folder Name</TableHead>
+                        <TableHead className="py-2 font-bold">Folder ID</TableHead>
+                        <TableHead className="py-2 font-bold">Financial Year</TableHead>
+                        <TableHead className="py-2 font-bold text-center">Status</TableHead>
+                        <TableHead className="py-2 text-right">Action</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(driveStatus.data?.roots || []).map((root) => (
+                        <TableRow key={root.folderId}>
+                          <TableCell className="font-semibold">{root.name}</TableCell>
+                          <TableCell className="font-mono text-muted-foreground">{root.folderId}</TableCell>
+                          <TableCell><Badge variant="outline">{root.financialYear || "—"}</Badge></TableCell>
+                          <TableCell className="text-center">
+                            <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">Active</Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                              disabled={deleteRootMutation.isPending}
+                              onClick={() => deleteRootMutation.mutate(root.folderId)}
+                            >
+                              Remove
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {(driveStatus.data?.roots || []).length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={5} className="py-4 text-center text-muted-foreground">
+                            No root folders configured.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Add New Root Form */}
+                <div className="p-4 rounded-lg border bg-muted/20 space-y-3">
+                  <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">+ Add New Google Drive Root Folder</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2">
+                      <Input
+                        placeholder="Paste Google Drive Folder URL or Folder ID (e.g. https://drive.google.com/drive/folders/1blzU74aht...)"
+                        value={newRootUrl}
+                        onChange={(e) => setNewRootUrl(e.target.value)}
+                        className="text-xs"
+                      />
+                    </div>
+                    <div>
+                      <Input
+                        placeholder="Folder Name (e.g. All Bill 2025-26)"
+                        value={newRootName}
+                        onChange={(e) => setNewRootName(e.target.value)}
+                        className="text-xs"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 pt-1">
+                    <div className="w-48">
+                      <Input
+                        placeholder="Financial Year (e.g. 2025-26)"
+                        value={newRootFy}
+                        onChange={(e) => setNewRootFy(e.target.value)}
+                        className="text-xs"
+                      />
+                    </div>
+                    <Button
+                      size="sm"
+                      className="text-xs"
+                      disabled={!newRootUrl.trim() || addRootMutation.isPending}
+                      onClick={() =>
+                        addRootMutation.mutate({
+                          folderUrl: newRootUrl.trim(),
+                          name: newRootName.trim() || undefined,
+                          financialYear: newRootFy.trim() || undefined,
+                        })
+                      }
+                    >
+                      {addRootMutation.isPending ? "Adding Drive…" : "+ Add Drive Folder"}
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-lg">Extracted Annexure Database Records</CardTitle>
+                    <CardDescription>
+                      Structured rows extracted from Excel Annexure files in Google Drive bill folders.
+                    </CardDescription>
+                  </div>
+                  <div className="w-full sm:w-72">
+                    <Input
+                      placeholder="Search bill no, vehicle, invoice, file..."
+                      value={annexureSearch}
+                      onChange={(e) => {
+                        setAnnexureSearch(e.target.value);
+                        setAnnexurePage(1);
+                      }}
+                      className="text-xs"
+                    />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {annexuresQuery.isLoading ? (
+                  <div className="py-8 text-center text-xs text-muted-foreground">Loading annexure records…</div>
+                ) : annexuresQuery.isError ? (
+                  <div className="py-8 text-center text-xs text-destructive">
+                    {getApiErrorMessage(annexuresQuery.error)}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="overflow-x-auto rounded-lg border">
+                      <Table className="text-xs">
+                        <TableHeader className="bg-muted/50">
+                          <TableRow>
+                            <TableHead className="py-2">Bill No</TableHead>
+                            <TableHead className="py-2">Vehicle No</TableHead>
+                            <TableHead className="py-2">Invoice No</TableHead>
+                            <TableHead className="py-2">Delivery No</TableHead>
+                            <TableHead className="py-2">LR No</TableHead>
+                            <TableHead className="py-2">Consignor / Consignee</TableHead>
+                            <TableHead className="py-2 text-right">Freight Base</TableHead>
+                            <TableHead className="py-2 text-right">Total Amt</TableHead>
+                            <TableHead className="py-2">Source File</TableHead>
+                            <TableHead className="py-2 text-center">Action</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(annexuresQuery.data?.records || []).map((rec) => (
+                            <TableRow key={rec.annexureKey || rec._id} className="align-top">
+                              <TableCell className="font-semibold">{rec.billNumber || "—"}</TableCell>
+                              <TableCell className="font-mono font-medium">{rec.vehicleNumber || "—"}</TableCell>
+                              <TableCell>{rec.invoiceNumber || "—"}</TableCell>
+                              <TableCell>{rec.deliveryNumber || "—"}</TableCell>
+                              <TableCell>{rec.lrNumber || "—"}</TableCell>
+                              <TableCell>
+                                <div className="max-w-[180px] truncate" title={`${rec.consignorName || ''} -> ${rec.consigneeName || ''}`}>
+                                  {rec.consignorName ? <span className="font-medium">{rec.consignorName}</span> : null}
+                                  {rec.consigneeName ? <span className="text-muted-foreground"> → {rec.consigneeName}</span> : null}
+                                  {!rec.consignorName && !rec.consigneeName ? "—" : null}
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {rec.freightBaseAmount ? `₹${rec.freightBaseAmount.toLocaleString("en-IN")}` : "—"}
+                              </TableCell>
+                              <TableCell className="text-right font-medium text-emerald-600 dark:text-emerald-400">
+                                {rec.totalAmount ? `₹${rec.totalAmount.toLocaleString("en-IN")}` : "—"}
+                              </TableCell>
+                              <TableCell className="max-w-[150px] truncate" title={rec.fileName}>
+                                {rec.fileName}
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-2 text-[11px]"
+                                  onClick={() => setSelectedRawRecord(rec)}
+                                >
+                                  View Raw
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {(annexuresQuery.data?.records || []).length === 0 && (
+                            <TableRow>
+                              <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
+                                {annexureSearch
+                                  ? `No annexure records matching "${annexureSearch}"`
+                                  : "No extracted annexure records found in database. Click 'Scan Drive & Extract Annexures Now' to run scanner."}
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    {/* Pagination */}
+                    {(annexuresQuery.data?.totalPages ?? 0) > 1 && (
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <div>
+                          Showing page {annexuresQuery.data?.page} of {annexuresQuery.data?.totalPages} ({annexuresQuery.data?.total} total rows)
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={annexurePage <= 1}
+                            onClick={() => setAnnexurePage((p) => Math.max(1, p - 1))}
+                          >
+                            Previous
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={annexurePage >= (annexuresQuery.data?.totalPages ?? 1)}
+                            onClick={() => setAnnexurePage((p) => p + 1)}
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Raw JSON Modal Dialog */}
+            <AlertDialog open={!!selectedRawRecord} onOpenChange={(open) => (!open ? setSelectedRawRecord(null) : undefined)}>
+              <AlertDialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                <AlertDialogHeader>
+                  <AlertDialogTitle className="text-base font-bold">
+                    Annexure Raw Data & Header Mapping
+                  </AlertDialogTitle>
+                  <AlertDialogDescription className="text-xs">
+                    File: <span className="font-semibold text-foreground">{selectedRawRecord?.fileName}</span> (Row {selectedRawRecord?.rowNumber})
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <div className="space-y-4 text-xs my-2">
+                  <div>
+                    <h4 className="font-semibold text-muted-foreground mb-1">Header Mapping Used:</h4>
+                    <pre className="bg-muted p-2 rounded text-[11px] overflow-x-auto">
+                      {JSON.stringify(selectedRawRecord?.headerMapping || {}, null, 2)}
+                    </pre>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-muted-foreground mb-1">Raw Excel Row Data:</h4>
+                    <pre className="bg-muted p-2 rounded text-[11px] overflow-x-auto">
+                      {JSON.stringify(selectedRawRecord?.raw || {}, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+                <AlertDialogFooter>
+                  <AlertDialogAction onClick={() => setSelectedRawRecord(null)}>Close</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </TabsContent>
       </Tabs>

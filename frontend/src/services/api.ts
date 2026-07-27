@@ -258,18 +258,24 @@ function getBaseUrl() {
 
   const g = globalThis as unknown as { __fleetinsight_baseurl_logged?: boolean };
 
+  const envUrl = typeof fromEnv === "string" ? fromEnv.trim() : "";
+  const isLocalHost = host === "localhost" || host === "127.0.0.1";
+  const resolvedBaseUrl = envUrl
+    ? envUrl
+    : isLocalHost
+      ? DEFAULT_BASE_URL
+      : "https://fleetinsight.onrender.com";
+
   if (!g.__fleetinsight_baseurl_logged) {
     g.__fleetinsight_baseurl_logged = true;
     console.log("[fleetinsight] api baseUrl debug", {
-      VITE_API_URL: fromEnv,
+      VITE_API_URL: envUrl || undefined,
       hostname: host,
+      resolvedBaseUrl,
     });
   }
 
-  if (typeof fromEnv === "string" && fromEnv.trim()) return fromEnv.trim();
-
-  const isLocalHost = host === "localhost" || host === "127.0.0.1";
-  return isLocalHost ? DEFAULT_BASE_URL : "";
+  return resolvedBaseUrl;
 }
 
 export class ApiError extends Error {
@@ -634,3 +640,244 @@ export function getDeliveryNumberOptions(signal?: AbortSignal): Promise<{ option
 export function getTripNumberOptions(signal?: AbortSignal): Promise<{ options: string[] }> {
   return requestJson<{ options: string[] }>("/api/trip-number-options", { method: "GET", signal });
 }
+
+export type DriveRootItem = {
+  _id?: string;
+  folderId: string;
+  name: string;
+  financialYear?: string;
+  isActive: boolean;
+  addedBy?: string;
+  createdAt?: string;
+};
+
+export type DriveCrawlStatusResponse = {
+  rootFolderId?: string;
+  roots?: DriveRootItem[];
+  crawlState?: {
+    lastCrawlStartedAt?: string;
+    lastCrawlFinishedAt?: string;
+    status?: "IDLE" | "RUNNING" | "SUCCESS" | "FAILED";
+    lastError?: string;
+  };
+  stats?: {
+    totalFolders: number;
+    totalFiles: number;
+    totalBillFolders: number;
+    annexureCandidates: number;
+    annexuresProcessed: number;
+    totalRowsExtracted: number;
+  };
+  recentFiles?: Array<{
+    fileId: string;
+    name: string;
+    billFolderName?: string;
+    extractionStatus: "PENDING" | "SUCCESS" | "FAILED" | "SKIPPED";
+    extractedRowCount: number;
+    extractionError?: string;
+    updatedAt?: string;
+  }>;
+};
+
+export type AnnexureRecordItem = {
+  _id?: string;
+  annexureKey: string;
+  fileId: string;
+  fileName: string;
+  folderId?: string;
+  folderName?: string;
+  billFolderPath?: string;
+  fileModifiedTime?: string;
+  sheetName?: string;
+  rowNumber: number;
+  billNumber?: string;
+  invoiceNumber?: string;
+  deliveryNumber?: string;
+  vehicleNumber?: string;
+  vehicleSuffix?: string;
+  lrNumber?: string;
+  lrDate?: string;
+  deliveryDate?: string;
+  materialType?: string;
+  consignorName?: string;
+  consigneeName?: string;
+  destination?: string;
+  netWeight?: number;
+  grossWeight?: number;
+  chargeWeight?: number;
+  ratePerUnit?: number;
+  freightBaseAmount?: number;
+  sgst?: number;
+  cgst?: number;
+  igst?: number;
+  totalAmount?: number;
+  financialYear?: string;
+  raw?: Record<string, unknown>;
+  headerMapping?: Record<string, string>;
+  createdAt?: string;
+};
+
+export type AnnexuresResponse = {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  records: AnnexureRecordItem[];
+};
+
+export function adminGetDriveSyncStatus(): Promise<DriveCrawlStatusResponse> {
+  return requestJson<DriveCrawlStatusResponse>("/api/admin/drivesync", { method: "GET" });
+}
+
+export function adminAddDriveSyncRoot(payload: { folderUrl: string; name?: string; financialYear?: string }): Promise<{ message: string; config: DriveRootItem }> {
+  return requestJson<{ message: string; config: DriveRootItem }>("/api/admin/drivesync/roots", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function adminDeleteDriveSyncRoot(folderId: string): Promise<{ message: string }> {
+  return requestJson<{ message: string }>(`/api/admin/drivesync/roots/${encodeURIComponent(folderId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function adminRunDriveSyncNow(): Promise<{ message: string; result: unknown }> {
+  return requestJson<{ message: string; result: unknown }>("/api/admin/drivesync/run", { method: "POST" });
+}
+
+export function getAnnexureRecords(opts?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  billNumber?: string;
+  vehicleNumber?: string;
+  invoiceNumber?: string;
+  signal?: AbortSignal;
+}): Promise<AnnexuresResponse> {
+  const qs = new URLSearchParams();
+  if (opts?.page) qs.set("page", String(opts.page));
+  if (opts?.limit) qs.set("limit", String(opts.limit));
+  if (opts?.search) qs.set("search", opts.search.trim());
+  if (opts?.billNumber) qs.set("billNumber", opts.billNumber.trim());
+  if (opts?.vehicleNumber) qs.set("vehicleNumber", opts.vehicleNumber.trim());
+  if (opts?.invoiceNumber) qs.set("invoiceNumber", opts.invoiceNumber.trim());
+
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return requestJson<AnnexuresResponse>(`/api/admin/drivesync/annexures${suffix}`, {
+    method: "GET",
+    ...(opts?.signal ? { signal: opts.signal } : {}),
+  });
+}
+
+export type PaymentAdviceTallyItem = {
+  deliveryNumber: string;
+  invoiceNumber: string;
+  billNumber: string;
+  vehicleNumber: string;
+  lrNumber: string;
+  advicePaidAmount: number;
+  annexureBillAmount: number;
+  variance: number;
+  status: "TALLIED" | "SHORT_PAID" | "EXCESS_PAID" | "NOT_FOUND_IN_ANNEXURE";
+  adviceRecord?: {
+    invoiceNumber?: string;
+    deliveryNumber?: string;
+    documentNumber?: string;
+    grossAmount?: number;
+    deductionAmount?: number;
+    netAmount?: number;
+    adviceDate?: string;
+  };
+  annexureRecord?: {
+    billNumber?: string;
+    invoiceNumber?: string;
+    deliveryNumber?: string;
+    vehicleNumber?: string;
+    lrNumber?: string;
+    lrDate?: string;
+    deliveryDate?: string;
+    materialType?: string;
+    consignorName?: string;
+    consigneeName?: string;
+    destination?: string;
+    netWeight?: number;
+    grossWeight?: number;
+    chargeWeight?: number;
+    ratePerUnit?: number;
+    freightBaseAmount?: number;
+    sgst?: number;
+    cgst?: number;
+    igst?: number;
+    totalAmount?: number;
+    fileName?: string;
+    folderName?: string;
+  };
+};
+
+export type BillTallySummary = {
+  billNumber: string;
+  deliveryCount: number;
+  advicePaidAmt: number;
+  annexureBillAmt: number;
+  variance: number;
+  status: "TALLIED" | "SHORT_PAID" | "EXCESS_PAID";
+};
+
+export type PaymentAdviceTallyReport = {
+  overallStatus: "PERFECT_MATCH_TALLIED" | "VARIANCE_DETECTED";
+  totalAdviceItems: number;
+  totalAdvicePaidAmount: number;
+  totalAnnexureBillAmount: number;
+  totalVariance: number;
+  talliedCount: number;
+  shortPaidCount: number;
+  missingCount: number;
+  billSummary: BillTallySummary[];
+  items: PaymentAdviceTallyItem[];
+};
+
+export function verifyPaymentAdviceApi(
+  file: File,
+  opts?: { signal?: AbortSignal }
+): Promise<{
+  message: string;
+  originalName: string;
+  extractedRowCount: number;
+  report: PaymentAdviceTallyReport;
+}> {
+  const form = new FormData();
+  form.append("file", file);
+
+  const token = getAuthToken();
+  return fetch(`${getBaseUrl()}/api/payment-advice/verify`, {
+    method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: form,
+    ...(opts?.signal ? { signal: opts.signal } : {}),
+  }).then(async (res) => {
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new ApiError(text || `Verification failed with status ${res.status}`, { status: res.status });
+    }
+    const json = await res.json();
+    return {
+      ...json,
+      report: json.report || json.tallyReport,
+    };
+  });
+}
+
+// Backward compatibility export shims for browser HMR cache safety
+export function getPaymentAdviceFilesApi() { return Promise.resolve({ files: [] }); }
+export function getPaymentAdviceRecordsApi() { return Promise.resolve({ total: 0, page: 1, limit: 10, totalPages: 0, records: [] }); }
+export function uploadPaymentAdviceFileApi(file: File, opts?: { signal?: AbortSignal }) { return verifyPaymentAdviceApi(file, opts); }
+export function runReconciliationNowApi() { return Promise.resolve({ message: "OK", summary: {} as any }); }
+export function getReconciliationSummaryApi() { return Promise.resolve({} as any); }
+export function getReconciliationResultsApi() { return Promise.resolve({ total: 0, page: 1, limit: 10, totalPages: 0, results: [] }); }
+export function getReconciliationExportCsvUrl() { return ""; }
+
+

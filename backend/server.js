@@ -3,6 +3,7 @@ import { PORT, NODE_ENV } from "./config/env.js";
 import { connectDB } from "./config/db.js";
 import { startSheetSyncScheduler } from "./services/sheetSyncScheduler.js";
 import { markStaleSheetSyncRuns } from "./services/sheetSyncService.js";
+import { startDriveSyncScheduler } from "./services/driveSyncScheduler.js";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -79,6 +80,15 @@ async function start() {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[sheetSync] Failed to start scheduler:", err);
+  }
+
+  try {
+    startDriveSyncScheduler();
+    // eslint-disable-next-line no-console
+    console.log("[driveSync] Scheduler started");
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[driveSync] Failed to start scheduler:", err);
   }
 
   app.listen(PORT, () => {

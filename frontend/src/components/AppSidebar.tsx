@@ -1,4 +1,4 @@
-import { LayoutDashboard, Search, Upload, Truck, Shield, LogOut } from "lucide-react";
+import { LayoutDashboard, Search, Upload, Truck, Shield, LogOut, FileText } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
@@ -30,6 +30,7 @@ const items = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Search", url: "/search", icon: Search },
   { title: "Upload", url: "/upload", icon: Upload },
+  { title: "Payment Advice", url: "/payment-advice", icon: FileText },
   { title: "Admin", url: "/admin", icon: Shield },
 ];
 

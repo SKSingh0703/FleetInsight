@@ -8,6 +8,7 @@ import AppLayout from "@/components/AppLayout";
 import Dashboard from "@/pages/Dashboard";
 import SearchPage from "@/pages/SearchPage";
 import UploadPage from "@/pages/UploadPage";
+import PaymentAdvicePage from "@/pages/PaymentAdvicePage";
 import LoginPage from "@/pages/LoginPage";
 import PendingPage from "@/pages/PendingPage";
 import AdminPage from "@/pages/AdminPage";
@@ -60,6 +61,14 @@ const App = () => (
                   element={
                     <RequireAuth>
                       <UploadPage />
+                    </RequireAuth>
+                  }
+                />
+                <Route
+                  path="/payment-advice"
+                  element={
+                    <RequireAuth>
+                      <PaymentAdvicePage />
                     </RequireAuth>
                   }
                 />

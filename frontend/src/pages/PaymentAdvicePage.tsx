@@ -67,7 +67,9 @@ export default function PaymentAdvicePage() {
       const ann = item.annexureRecord || {};
 
       let matchStatusText = "NO MATCH FOUND";
-      if (item.status === "MATCHED" || item.status === "TALLIED") matchStatusText = "MATCHED";
+      if (item.status === "MATCHED" || item.status === "TALLIED") matchStatusText = "MATCHED (Exact)";
+      else if (item.status === "MATCHED_TDS") matchStatusText = "MATCHED (2% TDS Deducted)";
+      else if (item.status === "DEBIT_NOTE_DEDUCTION" || item.isDeduction) matchStatusText = "DEBIT NOTE / DEDUCTION";
       else if (item.status === "MATCHED_SHORT_PAID" || item.status === "SHORT_PAID") matchStatusText = "MATCHED (Short Paid)";
       else if (item.status === "MATCHED_EXCESS_PAID" || item.status === "EXCESS_PAID") matchStatusText = "MATCHED (Excess Paid)";
 
@@ -86,6 +88,10 @@ export default function PaymentAdvicePage() {
         ? `C:${ann.cgst || 0} S:${ann.sgst || 0} I:${ann.igst || 0}`
         : "—";
 
+      const freightBase = ann.freightBaseAmount || item.freightBaseAmount || 0;
+      const tds2Pct = item.tdsAmount || (freightBase ? Math.round(freightBase * 0.02 * 100) / 100 : 0);
+      const expectedNetPay = item.expectedPayable || (item.annexureBillAmount ? Math.round((item.annexureBillAmount - tds2Pct) * 100) / 100 : 0);
+
       return {
         "Invoice / Delivery No": item.deliveryNumber || item.invoiceNumber || "—",
         "Matched Bill No": item.billNumber !== "NOT_FOUND" ? item.billNumber : "—",
@@ -96,7 +102,9 @@ export default function PaymentAdvicePage() {
         "Consignor → Consignee": consignorConsignee,
         "Destination": ann.destination || "—",
         "Net / Gross Wt": weightCombined,
-        "Freight Base Amount (₹)": ann.freightBaseAmount || 0,
+        "Freight Base Amount (₹)": freightBase,
+        "TDS (2% Freight) (₹)": tds2Pct,
+        "Expected Net Payable (₹)": expectedNetPay,
         "Taxes": taxesCombined,
         "Annexure Total (₹)": item.annexureBillAmount || 0,
         "Advice Paid Net (₹)": item.advicePaidAmount || 0,
@@ -113,7 +121,7 @@ export default function PaymentAdvicePage() {
     wsBreakdown["!cols"] = [
       { wch: 22 }, // Invoice / Delivery No
       { wch: 22 }, // Matched Bill No
-      { wch: 22 }, // Match Status
+      { wch: 26 }, // Match Status
       { wch: 16 }, // Vehicle No
       { wch: 24 }, // LR Number & Date
       { wch: 18 }, // Material Type
@@ -121,6 +129,8 @@ export default function PaymentAdvicePage() {
       { wch: 25 }, // Destination
       { wch: 18 }, // Net / Gross Wt
       { wch: 22 }, // Freight Base Amount
+      { wch: 20 }, // TDS (2% Freight)
+      { wch: 24 }, // Expected Net Payable
       { wch: 22 }, // Taxes
       { wch: 22 }, // Annexure Total
       { wch: 20 }, // Advice Paid Net
@@ -130,7 +140,6 @@ export default function PaymentAdvicePage() {
       { wch: 35 }, // Source Annexure File
     ];
 
-    // Sheet 1 IS the full itemized table data!
     XLSX.utils.book_append_sheet(wb, wsBreakdown, "Payment Advice Breakdown");
 
     const safeFileName = tallyData.originalName.replace(/\.[^/.]+$/, "");
@@ -148,6 +157,8 @@ export default function PaymentAdvicePage() {
     const isMatched = item.status !== "NOT_FOUND" && item.status !== "NOT_FOUND_IN_ANNEXURE";
     if (statusFilter === "MATCHED" && !isMatched) return false;
     if (statusFilter === "NOT_MATCHED" && isMatched) return false;
+    if (statusFilter === "SHORT_PAID" && item.status !== "MATCHED_SHORT_PAID") return false;
+    if (statusFilter === "DEDUCTION" && item.status !== "DEBIT_NOTE_DEDUCTION" && !item.isDeduction) return false;
 
     if (!search.trim()) return true;
     const q = search.toLowerCase().trim();
@@ -160,20 +171,25 @@ export default function PaymentAdvicePage() {
     );
   });
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, isDeduction?: boolean) => {
+    if (isDeduction || status === "DEBIT_NOTE_DEDUCTION") {
+      return <Badge className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30 font-semibold">DEBIT NOTE / DEDUCTION 🔻</Badge>;
+    }
     switch (status) {
       case "MATCHED":
       case "TALLIED":
-        return <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">MATCHED ✅</Badge>;
+        return <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 font-semibold">MATCHED ✅</Badge>;
+      case "MATCHED_TDS":
+        return <Badge className="bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30 font-semibold">MATCHED (2% TDS) 🛡️</Badge>;
       case "MATCHED_SHORT_PAID":
       case "SHORT_PAID":
-        return <Badge variant="destructive">MATCHED (Short Paid) ⚠️</Badge>;
+        return <Badge variant="destructive" className="font-semibold">MATCHED (Short Paid) ⚠️</Badge>;
       case "MATCHED_EXCESS_PAID":
       case "EXCESS_PAID":
-        return <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">MATCHED (Excess) ℹ️</Badge>;
+        return <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 font-semibold">MATCHED (Excess) ℹ️</Badge>;
       case "NOT_FOUND":
       case "NOT_FOUND_IN_ANNEXURE":
-        return <Badge variant="outline" className="text-destructive border-destructive/30">NO MATCH FOUND ❌</Badge>;
+        return <Badge variant="outline" className="text-destructive border-destructive/30 font-semibold">NO MATCH FOUND ❌</Badge>;
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }
@@ -329,6 +345,7 @@ export default function PaymentAdvicePage() {
                     <TabsList className="h-8 text-xs">
                       <TabsTrigger value="ALL" className="text-xs py-1 px-2.5">All ({report.totalAdviceItems})</TabsTrigger>
                       <TabsTrigger value="MATCHED" className="text-xs py-1 px-2.5">Matched ({matchedCount})</TabsTrigger>
+                      <TabsTrigger value="DEDUCTION" className="text-xs py-1 px-2.5 text-purple-600 dark:text-purple-400 font-medium">Deductions ({report.items.filter(i => i.isDeduction || i.status === 'DEBIT_NOTE_DEDUCTION' || i.advicePaidAmount < 0).length})</TabsTrigger>
                       <TabsTrigger value="NOT_MATCHED" className="text-xs py-1 px-2.5">No Match ({missingCount})</TabsTrigger>
                     </TabsList>
                   </Tabs>
@@ -359,6 +376,8 @@ export default function PaymentAdvicePage() {
                       <TableHead className="py-2 whitespace-nowrap">Destination</TableHead>
                       <TableHead className="py-2 whitespace-nowrap text-right">Net / Gross Wt (MT)</TableHead>
                       <TableHead className="py-2 whitespace-nowrap text-right">Freight Base (₹)</TableHead>
+                      <TableHead className="py-2 whitespace-nowrap text-right text-blue-600 dark:text-blue-400 font-bold">TDS (2% Freight)</TableHead>
+                      <TableHead className="py-2 whitespace-nowrap text-right text-emerald-600 dark:text-emerald-400 font-bold">Expected Payable (after TDS)</TableHead>
                       <TableHead className="py-2 whitespace-nowrap text-right">Taxes (₹)</TableHead>
                       <TableHead className="py-2 whitespace-nowrap text-right">Annexure Total (₹)</TableHead>
                       <TableHead className="py-2 whitespace-nowrap text-right">Advice Paid Net (₹)</TableHead>
@@ -373,8 +392,12 @@ export default function PaymentAdvicePage() {
                       const ann = item.annexureRecord;
                       const taxSum = (ann?.sgst || 0) + (ann?.cgst || 0) + (ann?.igst || 0);
                       const lrDateFormatted = ann?.lrDate ? new Date(ann.lrDate).toLocaleDateString("en-IN") : "";
+                      const freightBase = ann?.freightBaseAmount || item.freightBaseAmount || 0;
+                      const tds2Pct = item.tdsAmount || (freightBase ? Math.round(freightBase * 0.02 * 100) / 100 : 0);
+                      const expectedNetPay = item.expectedPayable || (item.annexureBillAmount ? Math.round((item.annexureBillAmount - tds2Pct) * 100) / 100 : 0);
+
                       return (
-                        <TableRow key={idx} className="hover:bg-muted/30">
+                        <TableRow key={idx} className={`hover:bg-muted/30 ${item.isDeduction || item.advicePaidAmount < 0 ? "bg-purple-500/5 dark:bg-purple-950/10" : ""}`}>
                           <TableCell className="font-mono font-semibold whitespace-nowrap">
                             {item.deliveryNumber || item.invoiceNumber || "—"}
                           </TableCell>
@@ -408,7 +431,13 @@ export default function PaymentAdvicePage() {
                             ) : "—"}
                           </TableCell>
                           <TableCell className="text-right whitespace-nowrap font-mono">
-                            {ann?.freightBaseAmount ? `₹${ann.freightBaseAmount.toLocaleString("en-IN")}` : "—"}
+                            {freightBase ? `₹${freightBase.toLocaleString("en-IN")}` : "—"}
+                          </TableCell>
+                          <TableCell className="text-right whitespace-nowrap font-mono text-blue-600 dark:text-blue-400 font-semibold">
+                            {tds2Pct > 0 ? `₹${tds2Pct.toLocaleString("en-IN")}` : "—"}
+                          </TableCell>
+                          <TableCell className="text-right whitespace-nowrap font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                            {expectedNetPay > 0 ? `₹${expectedNetPay.toLocaleString("en-IN")}` : "—"}
                           </TableCell>
                           <TableCell className="text-right whitespace-nowrap font-mono">
                             {taxSum > 0 ? `₹${taxSum.toLocaleString("en-IN")}` : "—"}
@@ -416,13 +445,13 @@ export default function PaymentAdvicePage() {
                           <TableCell className="text-right whitespace-nowrap font-mono font-bold">
                             {item.annexureBillAmount ? `₹${item.annexureBillAmount.toLocaleString("en-IN")}` : "—"}
                           </TableCell>
-                          <TableCell className="text-right whitespace-nowrap font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                          <TableCell className={`text-right whitespace-nowrap font-mono font-bold ${item.advicePaidAmount < 0 ? "text-purple-600 dark:text-purple-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                             ₹{item.advicePaidAmount.toLocaleString("en-IN")}
                           </TableCell>
-                          <TableCell className={`text-right whitespace-nowrap font-mono font-bold ${item.variance > 0 ? "text-destructive" : item.variance < 0 ? "text-emerald-600" : "text-emerald-600"}`}>
+                          <TableCell className={`text-right whitespace-nowrap font-mono font-bold ${item.variance > 5 ? "text-destructive" : "text-emerald-600"}`}>
                             {item.variance ? `₹${item.variance.toLocaleString("en-IN")}` : "₹0"}
                           </TableCell>
-                          <TableCell className="text-center whitespace-nowrap">{getStatusBadge(item.status)}</TableCell>
+                          <TableCell className="text-center whitespace-nowrap">{getStatusBadge(item.status, item.isDeduction || item.advicePaidAmount < 0)}</TableCell>
                           <TableCell className="whitespace-nowrap max-w-[140px] truncate text-[11px] font-mono text-muted-foreground" title={ann?.fileName || ''}>
                             {ann?.fileName || "—"}
                           </TableCell>

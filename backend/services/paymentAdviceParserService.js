@@ -910,18 +910,32 @@ export async function tallyPaymentAdviceRecords(records) {
     let status = "NOT_FOUND";
     let billNumber = "NOT_FOUND";
     let annexureBillAmt = 0;
+    let freightBaseAmt = 0;
+    let tdsAmount = 0;
+    let expectedPayable = 0;
     let variance = 0;
+    const isDeduction = advicePaidAmt < 0;
 
     if (isMatched) {
       totalMatched += 1;
       billNumber = annexureRecord.billNumber || "UNKNOWN_BILL";
       annexureBillAmt = annexureRecord.totalAmount || annexureRecord.freightBaseAmount || 0;
+      freightBaseAmt = annexureRecord.freightBaseAmount || 0;
+      
+      // Calculate 2% TDS on Freight Base Amount
+      tdsAmount = Math.round((freightBaseAmt * 0.02) * 100) / 100;
+      expectedPayable = Math.round((annexureBillAmt - tdsAmount) * 100) / 100;
+      
       totalAnnexureBillAmount += annexureBillAmt;
-      variance = annexureBillAmt - advicePaidAmt;
+      variance = Math.round((expectedPayable - advicePaidAmt) * 100) / 100;
 
-      if (Math.abs(variance) < 1) {
+      if (isDeduction) {
+        status = "DEBIT_NOTE_DEDUCTION";
+      } else if (Math.abs(annexureBillAmt - advicePaidAmt) <= 2) {
         status = "MATCHED";
-      } else if (variance > 0) {
+      } else if (Math.abs(expectedPayable - advicePaidAmt) <= 5) {
+        status = "MATCHED_TDS";
+      } else if (variance > 5) {
         status = "MATCHED_SHORT_PAID";
       } else {
         status = "MATCHED_EXCESS_PAID";
@@ -933,6 +947,9 @@ export async function tallyPaymentAdviceRecords(records) {
           deliveryCount: 0,
           advicePaidAmt: 0,
           annexureBillAmt: 0,
+          freightBaseAmt: 0,
+          tdsAmount: 0,
+          expectedPayable: 0,
           variance: 0,
           status: "MATCHED",
         });
@@ -941,9 +958,15 @@ export async function tallyPaymentAdviceRecords(records) {
       bStat.deliveryCount += 1;
       bStat.advicePaidAmt += advicePaidAmt;
       bStat.annexureBillAmt += annexureBillAmt;
+      bStat.freightBaseAmt += freightBaseAmt;
+      bStat.tdsAmount += tdsAmount;
+      bStat.expectedPayable += expectedPayable;
       bStat.variance += variance;
     } else {
       totalUnmatched += 1;
+      if (isDeduction) {
+        status = "DEBIT_NOTE_DEDUCTION";
+      }
     }
 
     items.push({
@@ -951,7 +974,11 @@ export async function tallyPaymentAdviceRecords(records) {
       status,
       billNumber,
       annexureBillAmount: annexureBillAmt,
+      freightBaseAmount: freightBaseAmt,
+      tdsAmount,
+      expectedPayable,
       variance,
+      isDeduction,
       advicePaidAmount: advicePaidAmt,
       annexureRecord: annexureRecord || undefined,
       adviceRecord: record,

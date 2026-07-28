@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { verifyPaymentAdviceApi, PaymentAdviceTallyReport, PaymentAdviceTallyItem } from "@/services/api";
-import { FileText, CheckCircle2, AlertCircle, Loader2, Search, AlertTriangle, Eye, Info, XCircle } from "lucide-react";
+import { FileText, CheckCircle2, AlertCircle, Loader2, Search, AlertTriangle, Eye, Info, XCircle, Download } from "lucide-react";
+import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,7 +28,7 @@ export default function PaymentAdvicePage() {
         originalName: data.originalName,
         report: rep,
       });
-      const matched = (rep.totalAdviceItems || 0) - (rep.missingCount || 0);
+      const matched = rep.totalMatched ?? 0;
       toast({
         title: "Payment Advice Tallied!",
         description: `${matched} of ${rep.totalAdviceItems} records matched to Google Drive Annexure Bills.`,
@@ -57,6 +58,91 @@ export default function PaymentAdvicePage() {
   const report = tallyData?.report;
   const matchedCount = report?.totalMatched ?? 0;
   const missingCount = report?.totalUnmatched ?? 0;
+
+  const handleDownloadExcel = () => {
+    if (!tallyData || !report) return;
+
+    // Build line-by-line breakdown rows matching the exact table columns
+    const breakdownRows = (report.items || []).map((item) => {
+      const ann = item.annexureRecord || {};
+
+      let matchStatusText = "NO MATCH FOUND";
+      if (item.status === "MATCHED" || item.status === "TALLIED") matchStatusText = "MATCHED";
+      else if (item.status === "MATCHED_SHORT_PAID" || item.status === "SHORT_PAID") matchStatusText = "MATCHED (Short Paid)";
+      else if (item.status === "MATCHED_EXCESS_PAID" || item.status === "EXCESS_PAID") matchStatusText = "MATCHED (Excess Paid)";
+
+      const lrDateStr = ann.lrDate ? new Date(ann.lrDate).toLocaleDateString("en-IN") : "";
+      const lrCombined = ann.lrNumber ? (lrDateStr ? `${ann.lrNumber} (${lrDateStr})` : ann.lrNumber) : "—";
+
+      const consignorConsignee = (ann.consignorName || ann.consigneeName)
+        ? `${ann.consignorName || "—"} → ${ann.consigneeName || "—"}`
+        : "—";
+
+      const weightCombined = (ann.netWeight || ann.grossWeight)
+        ? `${ann.netWeight || "0"} / ${ann.grossWeight || "0"} MT`
+        : "—";
+
+      const taxesCombined = (ann.cgst || ann.sgst || ann.igst)
+        ? `C:${ann.cgst || 0} S:${ann.sgst || 0} I:${ann.igst || 0}`
+        : "—";
+
+      return {
+        "Invoice / Delivery No": item.deliveryNumber || item.invoiceNumber || "—",
+        "Matched Bill No": item.billNumber !== "NOT_FOUND" ? item.billNumber : "—",
+        "Match Status": matchStatusText,
+        "Vehicle No": item.vehicleNumber || ann.vehicleNumber || "—",
+        "LR Number & Date": lrCombined,
+        "Material Type": ann.materialType || "—",
+        "Consignor → Consignee": consignorConsignee,
+        "Destination": ann.destination || "—",
+        "Net / Gross Wt": weightCombined,
+        "Freight Base Amount (₹)": ann.freightBaseAmount || 0,
+        "Taxes": taxesCombined,
+        "Annexure Total (₹)": item.annexureBillAmount || 0,
+        "Advice Paid Net (₹)": item.advicePaidAmount || 0,
+        "Variance / Shortage (₹)": item.variance || 0,
+        "FI Document No": item.documentNumber || "—",
+        "Payment Ref No": item.paymentReferenceNumber || "—",
+        "Source Annexure File": ann.fileName || "—",
+      };
+    });
+
+    const wb = XLSX.utils.book_new();
+    const wsBreakdown = XLSX.utils.json_to_sheet(breakdownRows);
+
+    wsBreakdown["!cols"] = [
+      { wch: 22 }, // Invoice / Delivery No
+      { wch: 22 }, // Matched Bill No
+      { wch: 22 }, // Match Status
+      { wch: 16 }, // Vehicle No
+      { wch: 24 }, // LR Number & Date
+      { wch: 18 }, // Material Type
+      { wch: 40 }, // Consignor -> Consignee
+      { wch: 25 }, // Destination
+      { wch: 18 }, // Net / Gross Wt
+      { wch: 22 }, // Freight Base Amount
+      { wch: 22 }, // Taxes
+      { wch: 22 }, // Annexure Total
+      { wch: 20 }, // Advice Paid Net
+      { wch: 22 }, // Variance
+      { wch: 18 }, // FI Document No
+      { wch: 18 }, // Payment Ref No
+      { wch: 35 }, // Source Annexure File
+    ];
+
+    // Sheet 1 IS the full itemized table data!
+    XLSX.utils.book_append_sheet(wb, wsBreakdown, "Payment Advice Breakdown");
+
+    const safeFileName = tallyData.originalName.replace(/\.[^/.]+$/, "");
+    const exportFileName = `Payment_Advice_Breakdown_${safeFileName}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+    XLSX.writeFile(wb, exportFileName);
+
+    toast({
+      title: "Excel Export Downloaded",
+      description: `Exported ${breakdownRows.length} table rows to ${exportFileName}`,
+    });
+  };
 
   const filteredItems = (report?.items || []).filter((item) => {
     const isMatched = item.status !== "NOT_FOUND" && item.status !== "NOT_FOUND_IN_ANNEXURE";
@@ -230,6 +316,15 @@ export default function PaymentAdvicePage() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    size="sm"
+                    onClick={handleDownloadExcel}
+                    className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium gap-1.5 shadow-sm"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Export to Excel
+                  </Button>
+
                   <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as any)}>
                     <TabsList className="h-8 text-xs">
                       <TabsTrigger value="ALL" className="text-xs py-1 px-2.5">All ({report.totalAdviceItems})</TabsTrigger>

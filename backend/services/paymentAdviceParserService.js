@@ -4,6 +4,7 @@ const pdfParse = require("pdf-parse");
 import xlsx from "xlsx";
 import crypto from "crypto";
 import { AnnexureRecord } from "../models/annexureRecordModel.js";
+import { normalizeVehicle } from "../utils/vehicleNormalization.js";
 
 function cleanString(val) {
   if (val == null) return "";
@@ -68,12 +69,26 @@ function parseDate(val) {
 
   const m = s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
   if (m) {
-    const dd = Number(m[1]);
-    const mm = Number(m[2]);
+    let p1 = Number(m[1]);
+    let p2 = Number(m[2]);
     let yy = Number(m[3]);
     if (yy < 100) yy += 2000;
-    const d = new Date(Date.UTC(yy, mm - 1, dd));
-    return Number.isNaN(d.getTime()) ? undefined : d;
+
+    let dd, mm;
+    if (p1 <= 12 && p2 > 12) {
+      // MM/DD/YYYY format (e.g. 7/22/2026)
+      mm = p1;
+      dd = p2;
+    } else {
+      // DD/MM/YYYY format (e.g. 22/07/2026 or 08/05/2026)
+      dd = p1;
+      mm = p2;
+    }
+
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      const d = new Date(Date.UTC(yy, mm - 1, dd));
+      return Number.isNaN(d.getTime()) ? undefined : d;
+    }
   }
 
   const d = new Date(s);
@@ -708,6 +723,41 @@ export async function parsePdfPaymentAdvice(buffer, fileId, fileName) {
   return { meta, records };
 }
 
+// Helper for exact and fuzzy column matching
+function getColumnValue(row, exactKeys, aliasList, excludeList = []) {
+  if (!row || typeof row !== "object") return undefined;
+  const keys = Object.keys(row);
+
+  // 1. Try exact equality match first (case-insensitive)
+  for (const k of keys) {
+    const nk = String(k).trim().toLowerCase().replace(/\s+/g, " ");
+    if (exactKeys.includes(nk)) {
+      const val = row[k];
+      if (val !== undefined && val !== null && String(val).trim() !== "") {
+        return val;
+      }
+    }
+  }
+
+  // 2. Try substring matching with exclude filtering
+  for (const k of keys) {
+    const nk = String(k).trim().toLowerCase().replace(/\s+/g, " ");
+    if (excludeList.some((ex) => nk.includes(ex.toLowerCase()))) {
+      continue;
+    }
+    for (const alias of aliasList) {
+      if (nk.includes(alias.toLowerCase())) {
+        const val = row[k];
+        if (val !== undefined && val !== null && String(val).trim() !== "") {
+          return val;
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
 // Parse XLSX Payment Advice File
 export async function parseXlsxPaymentAdvice(buffer, fileId, fileName) {
   const workbook = xlsx.read(buffer, { type: "buffer", cellDates: true, raw: false });
@@ -722,99 +772,361 @@ export async function parseXlsxPaymentAdvice(buffer, fileId, fileName) {
     currency: "INR",
   };
 
+  const docNoExact = ["fu number", "fu no", "rfu number", "rfu no", "factoring unit number", "factoring unit no", "fi document no", "fi document number", "document number", "doc no", "document no"];
+  const docNoAliases = ["fu number", "rfu number", "factoring unit", "fi document", "document no", "doc no", "rfu"];
+  const docNoExcludes = ["date", "amount", "status", "remarks"];
+
+  const invNoExact = ["vendor invoice number", "invoice number", "invoice no", "inv no", "bill number", "bill no"];
+  const invNoAliases = ["vendor invoice number", "invoice number", "invoice no", "inv no", "bill number", "bill no"];
+  const invNoExcludes = ["date", "amount", "gross", "net", "acceptance", "status", "remarks", "type", "description", "group", "tds", "fee", "rate"];
+
+  const delNoExact = ["delivery number", "delivery no", "del no", "lr number", "lr no"];
+  const delNoAliases = ["delivery number", "delivery no", "del no", "lr number"];
+
+  const vehNoExact = ["vehicle number", "vehicle no", "truck number", "truck no", "lorry number", "lorry no"];
+  const vehNoAliases = ["vehicle number", "vehicle no", "truck no"];
+
+  const docDateExact = ["invoice date", "document date", "inv date", "bill date"];
+  const docDateAliases = ["invoice date", "document date", "inv date", "bill date"];
+  const docDateExcludes = ["acceptance", "posting", "value", "due"];
+
+  const postDateExact = ["invoice acceptance date", "posting date", "value date", "payment date", "due date"];
+  const postDateAliases = ["acceptance date", "posting date", "value date", "payment date"];
+
+  const grossAmtExact = ["invoice gross amount", "fu amount", "gross amount", "gross amt", "invoice amount", "bill amount", "total invoice value", "total amount"];
+  const grossAmtAliases = ["fu amount", "invoice gross", "gross amount", "gross amt", "invoice amount", "bill amount"];
+
+  const netAmtExact = ["net pay in", "net pay", "net paid", "net amount", "payment amount", "net amt", "amount paid", "total paid"];
+  const netAmtAliases = ["net pay in", "net pay", "net paid", "net amount", "payment amount", "net amt"];
+
+  const dedAmtExact = ["adjustments/ tds", "adjustments", "deductions", "tds", "tds amount"];
+  const dedAmtAliases = ["adjustment", "deduction", "tds"];
+
+  const interestAmtExact = ["interest amount", "interest", "interest ar"];
+  const interestAmtAliases = ["interest amount", "interest"];
+
+  const tredsFeeExact = ["treds fee", "treds fees", "platform fee", "bank fee"];
+  const tredsFeeAliases = ["treds fee", "platform fee"];
+
+  const payRefExact = ["payment reference number", "payment ref", "ref no", "reference number", "utr number", "utr no"];
+  const payRefAliases = ["payment reference", "payment ref", "ref no", "utr"];
+
   let globalRowIndex = 0;
 
   for (const sheetName of workbook.SheetNames || []) {
     const worksheet = workbook.Sheets[sheetName];
     if (!worksheet) continue;
 
-    const rows = xlsx.utils.sheet_to_json(worksheet, { defval: "", raw: false });
+    // Detect header row dynamically
+    const rawRows = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: false });
+    if (rawRows.length === 0) continue;
+
+    let headerIndex = 0;
+    for (let r = 0; r < Math.min(rawRows.length, 10); r++) {
+      const rowStr = rawRows[r].join(" ").toLowerCase();
+      if (
+        rowStr.includes("fu number") ||
+        rowStr.includes("invoice number") ||
+        rowStr.includes("vendor invoice") ||
+        rowStr.includes("gross amount") ||
+        rowStr.includes("net pay") ||
+        rowStr.includes("net amount") ||
+        rowStr.includes("bill number")
+      ) {
+        headerIndex = r;
+        break;
+      }
+    }
+
+    const rows = xlsx.utils.sheet_to_json(worksheet, { range: headerIndex, defval: "", raw: false });
     if (rows.length === 0) continue;
 
+    // First pass: Extract raw row items
+    const parsedRows = [];
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       if (!row || typeof row !== "object") continue;
 
-      const keys = Object.keys(row);
-      const getColVal = (aliases) => {
-        for (const k of keys) {
-          const nk = String(k).trim().toLowerCase().replace(/\s+/g, " ");
-          for (const alias of aliases) {
-            if (nk.includes(alias.toLowerCase())) {
-              return row[k];
-            }
-          }
-        }
-        return undefined;
-      };
+      const documentNumber = cleanString(getColumnValue(row, docNoExact, docNoAliases, docNoExcludes));
+      const invoiceNumber = cleanString(getColumnValue(row, invNoExact, invNoAliases, invNoExcludes));
+      const deliveryNumber = cleanString(getColumnValue(row, delNoExact, delNoAliases));
 
-      const invoiceNumber = cleanString(getColVal(["vendor invoice number", "invoice number", "invoice no", "inv no", "invoice", "inv", "bill no", "bill number", "delivery no", "delivery number"]));
-      const deliveryNumber = cleanString(getColVal(["delivery number", "delivery no", "del no"]));
-      const rawVehicle = cleanString(getColVal(["vehicle number", "vehicle no", "truck no"]));
+      const rawVehicle = cleanString(getColumnValue(row, vehNoExact, vehNoAliases));
       const { vehicleNumber, vehicleSuffix } = normalizeVehicle(rawVehicle);
 
-      const documentNumber = cleanString(getColVal(["fi document no", "document number", "doc no", "document no", "rfu number", "rfu no"]));
-      const paymentRef = cleanString(getColVal(["payment reference number", "payment ref", "ref no"]));
+      const paymentReferenceNumber = cleanString(getColumnValue(row, payRefExact, payRefAliases));
 
-      const grossAmount = parseAmount(getColVal(["invoice amount", "gross amount", "gross amt", "fu amount", "bill amount", "total invoice value", "total amount"]));
-      const deductionAmount = parseAmount(getColVal(["adjustments/ tds", "adjustments", "deductions", "tds"]));
-      const discountAmount = parseAmount(getColVal(["discount amount", "discount"]));
-      const netAmount = parseAmount(getColVal(["net pay in", "net pay", "net paid", "net amount", "payment amount", "net amt", "amount paid", "total paid"]));
+      const grossAmount = parseAmount(getColumnValue(row, grossAmtExact, grossAmtAliases));
+      const netAmount = parseAmount(getColumnValue(row, netAmtExact, netAmtAliases));
+      const deductionAmount = parseAmount(getColumnValue(row, dedAmtExact, dedAmtAliases));
+      const interestAmount = parseAmount(getColumnValue(row, interestAmtExact, interestAmtAliases));
+      const tredsFee = parseAmount(getColumnValue(row, tredsFeeExact, tredsFeeAliases));
 
-      const documentDate = parseDate(getColVal(["invoice date", "document date", "inv date", "date"]));
-      const postingDate = parseDate(getColVal(["posting date", "value date"]));
+      const cgst = parseAmount(getColumnValue(row, ["cgst"], ["cgst"]));
+      const sgst = parseAmount(getColumnValue(row, ["sgst"], ["sgst"]));
+      const igst = parseAmount(getColumnValue(row, ["igst"], ["igst"]));
+      const ugst = parseAmount(getColumnValue(row, ["ugst"], ["ugst"]));
+      const gstAmount = cgst + sgst + igst + ugst;
 
+      const documentDate = parseDate(getColumnValue(row, docDateExact, docDateAliases, docDateExcludes));
+      const postingDate = parseDate(getColumnValue(row, postDateExact, postDateAliases));
+
+      // Skip row if completely empty
       if (!invoiceNumber && !documentNumber && !deliveryNumber && grossAmount === 0 && netAmount === 0) {
         continue;
       }
 
-      globalRowIndex += 1;
-      const docScope = meta.paymentDocNo ? `doc_${meta.paymentDocNo}` : fileId;
-      const adviceKeyPayload = `${docScope}:${sheetName}:${globalRowIndex}:${invoiceNumber}:${documentNumber}:${grossAmount}:${netAmount}`;
-      const adviceKey = crypto.createHash("sha256").update(adviceKeyPayload).digest("hex");
-
-      records.push({
-        adviceKey,
-        fileId,
-        fileName,
-        paymentDocNo: meta.paymentDocNo,
-        paymentDate: meta.valueDate,
-        bankRefNo: meta.bankRefNo,
-        vendorCode: meta.vendorCode,
-
+      parsedRows.push({
+        rawRowIndex: i + 1,
+        documentNumber,
         invoiceNumber,
         deliveryNumber,
         vehicleNumber,
         vehicleSuffix,
-
-        documentNumber,
-        paymentReferenceNumber: paymentRef,
+        paymentReferenceNumber,
+        grossAmount,
+        netAmount,
+        deductionAmount,
+        interestAmount,
+        tredsFee,
+        gstAmount,
         documentDate,
         postingDate,
-
-        grossAmount,
-        deductionAmount,
-        discountAmount,
-        netAmount: netAmount || (grossAmount ? grossAmount - deductionAmount - discountAmount : 0),
-        currency: meta.currency,
-
-        pageNumber: 1,
-        rowNumber: globalRowIndex,
-
         raw: row,
-        headerMapping: {
-          invoiceNumber: "Invoice Number",
-          documentNumber: "FI Document No",
-          grossAmount: "Gross Amount",
-          deductionAmount: "Adjustments/TDS",
-          netAmount: "Net Amount",
-        },
       });
+    }
+
+    if (parsedRows.length === 0) continue;
+
+    // Second pass: Group rows by documentNumber / FU Number (or group consecutive rows)
+    const groups = [];
+    let currentGroup = null;
+
+    for (let i = 0; i < parsedRows.length; i++) {
+      const pRow = parsedRows[i];
+      const hasDocNo = !!pRow.documentNumber;
+
+      if (hasDocNo) {
+        if (currentGroup && currentGroup.documentNumber === pRow.documentNumber) {
+          currentGroup.rows.push(pRow);
+        } else {
+          currentGroup = {
+            documentNumber: pRow.documentNumber,
+            rows: [pRow],
+          };
+          groups.push(currentGroup);
+        }
+      } else {
+        if (currentGroup) {
+          currentGroup.rows.push(pRow);
+        } else {
+          currentGroup = {
+            documentNumber: "",
+            rows: [pRow],
+          };
+          groups.push(currentGroup);
+        }
+      }
+    }
+
+    // Third pass: Aggregate each group into clean Payment Advice records
+    for (const group of groups) {
+      let groupDocNo = group.documentNumber;
+      let groupNetAmount = 0;
+      let groupGrossAmount = 0;
+      let groupDeductions = 0;
+      let groupPaymentRef = "";
+      let groupVehicle = "";
+      let groupVehicleSuffix = "";
+
+      for (const r of group.rows) {
+        if (!groupDocNo && r.documentNumber) groupDocNo = r.documentNumber;
+        if (!groupNetAmount && r.netAmount) groupNetAmount = r.netAmount;
+        if (!groupGrossAmount && r.grossAmount) groupGrossAmount = r.grossAmount;
+        if (!groupPaymentRef && r.paymentReferenceNumber) groupPaymentRef = r.paymentReferenceNumber;
+        if (!groupVehicle && r.vehicleNumber) {
+          groupVehicle = r.vehicleNumber;
+          groupVehicleSuffix = r.vehicleSuffix;
+        }
+
+        const totalFees = r.deductionAmount + r.interestAmount + r.tredsFee + r.gstAmount;
+        groupDeductions += totalFees;
+      }
+      groupDeductions = Math.round(groupDeductions * 100) / 100;
+
+      const invoiceRows = group.rows.filter((r) => r.invoiceNumber || r.deliveryNumber || r.documentDate);
+
+      if (invoiceRows.length === 1) {
+        const invRow = invoiceRows[0];
+        globalRowIndex += 1;
+
+        const invNo = invRow.invoiceNumber || "";
+        const delNo = invRow.deliveryNumber || "";
+        const finalGross = invRow.grossAmount || groupGrossAmount || 0;
+
+        let finalDeduction = groupDeductions;
+        let finalNet = groupNetAmount;
+
+        if (!finalNet && finalGross) {
+          finalNet = Math.max(0, finalGross - finalDeduction);
+        } else if (finalNet && !finalDeduction && finalGross && finalGross >= finalNet) {
+          finalDeduction = Math.round((finalGross - finalNet) * 100) / 100;
+        }
+
+        const docScope = meta.paymentDocNo ? `doc_${meta.paymentDocNo}` : fileId;
+        const adviceKeyPayload = `${docScope}:${sheetName}:${globalRowIndex}:${invNo}:${groupDocNo}:${finalGross}:${finalNet}`;
+        const adviceKey = crypto.createHash("sha256").update(adviceKeyPayload).digest("hex");
+
+        records.push({
+          adviceKey,
+          fileId,
+          fileName,
+          paymentDocNo: meta.paymentDocNo,
+          paymentDate: meta.valueDate,
+          bankRefNo: meta.bankRefNo,
+          vendorCode: meta.vendorCode,
+
+          invoiceNumber: invNo,
+          deliveryNumber: delNo,
+          vehicleNumber: invRow.vehicleNumber || groupVehicle,
+          vehicleSuffix: invRow.vehicleSuffix || groupVehicleSuffix,
+
+          documentNumber: groupDocNo,
+          paymentReferenceNumber: invRow.paymentReferenceNumber || groupPaymentRef,
+          documentDate: invRow.documentDate,
+          postingDate: invRow.postingDate,
+
+          grossAmount: finalGross,
+          deductionAmount: finalDeduction,
+          discountAmount: 0,
+          netAmount: finalNet,
+          currency: meta.currency,
+
+          pageNumber: 1,
+          rowNumber: globalRowIndex,
+
+          raw: invRow.raw,
+          headerMapping: {
+            invoiceNumber: "Invoice Number",
+            documentNumber: "FU Number",
+            grossAmount: "Gross Amount",
+            deductionAmount: "Deductions/Fees",
+            netAmount: "Net Amount",
+          },
+        });
+      } else if (invoiceRows.length > 1) {
+        const totalInvoiceGross = invoiceRows.reduce((sum, r) => sum + (r.grossAmount || 0), 0);
+
+        for (const invRow of invoiceRows) {
+          globalRowIndex += 1;
+          const invNo = invRow.invoiceNumber || "";
+          const delNo = invRow.deliveryNumber || "";
+          const rowGross = invRow.grossAmount || (groupGrossAmount ? groupGrossAmount / invoiceRows.length : 0);
+
+          const ratio = totalInvoiceGross > 0 ? rowGross / totalInvoiceGross : 1 / invoiceRows.length;
+          const rowNet = invRow.netAmount || Math.round((groupNetAmount * ratio) * 100) / 100;
+          const rowDeduction = Math.round((rowGross - rowNet) * 100) / 100;
+
+          const docScope = meta.paymentDocNo ? `doc_${meta.paymentDocNo}` : fileId;
+          const adviceKeyPayload = `${docScope}:${sheetName}:${globalRowIndex}:${invNo}:${groupDocNo}:${rowGross}:${rowNet}`;
+          const adviceKey = crypto.createHash("sha256").update(adviceKeyPayload).digest("hex");
+
+          records.push({
+            adviceKey,
+            fileId,
+            fileName,
+            paymentDocNo: meta.paymentDocNo,
+            paymentDate: meta.valueDate,
+            bankRefNo: meta.bankRefNo,
+            vendorCode: meta.vendorCode,
+
+            invoiceNumber: invNo,
+            deliveryNumber: delNo,
+            vehicleNumber: invRow.vehicleNumber || groupVehicle,
+            vehicleSuffix: invRow.vehicleSuffix || groupVehicleSuffix,
+
+            documentNumber: groupDocNo,
+            paymentReferenceNumber: invRow.paymentReferenceNumber || groupPaymentRef,
+            documentDate: invRow.documentDate,
+            postingDate: invRow.postingDate,
+
+            grossAmount: rowGross,
+            deductionAmount: Math.max(0, rowDeduction),
+            discountAmount: 0,
+            netAmount: rowNet,
+            currency: meta.currency,
+
+            pageNumber: 1,
+            rowNumber: globalRowIndex,
+
+            raw: invRow.raw,
+            headerMapping: {
+              invoiceNumber: "Invoice Number",
+              documentNumber: "FU Number",
+              grossAmount: "Gross Amount",
+              deductionAmount: "Deductions/Fees",
+              netAmount: "Net Amount",
+            },
+          });
+        }
+      } else {
+        for (const r of group.rows) {
+          globalRowIndex += 1;
+          const invNo = r.invoiceNumber || "";
+          const delNo = r.deliveryNumber || "";
+          const rowGross = r.grossAmount || groupGrossAmount || 0;
+          const rowNet = r.netAmount || groupNetAmount || rowGross;
+          const rowDeductions = groupDeductions || Math.max(0, rowGross - rowNet);
+
+          const docScope = meta.paymentDocNo ? `doc_${meta.paymentDocNo}` : fileId;
+          const adviceKeyPayload = `${docScope}:${sheetName}:${globalRowIndex}:${invNo}:${groupDocNo}:${rowGross}:${rowNet}`;
+          const adviceKey = crypto.createHash("sha256").update(adviceKeyPayload).digest("hex");
+
+          records.push({
+            adviceKey,
+            fileId,
+            fileName,
+            paymentDocNo: meta.paymentDocNo,
+            paymentDate: meta.valueDate,
+            bankRefNo: meta.bankRefNo,
+            vendorCode: meta.vendorCode,
+
+            invoiceNumber: invNo,
+            deliveryNumber: delNo,
+            vehicleNumber: r.vehicleNumber || groupVehicle,
+            vehicleSuffix: r.vehicleSuffix || groupVehicleSuffix,
+
+            documentNumber: groupDocNo,
+            paymentReferenceNumber: r.paymentReferenceNumber || groupPaymentRef,
+            documentDate: r.documentDate,
+            postingDate: r.postingDate,
+
+            grossAmount: rowGross,
+            deductionAmount: rowDeductions,
+            discountAmount: 0,
+            netAmount: rowNet,
+            currency: meta.currency,
+
+            pageNumber: 1,
+            rowNumber: globalRowIndex,
+
+            raw: r.raw,
+            headerMapping: {
+              invoiceNumber: "Invoice Number",
+              documentNumber: "FU Number",
+              grossAmount: "Gross Amount",
+              deductionAmount: "Deductions/Fees",
+              netAmount: "Net Amount",
+            },
+          });
+        }
+      }
     }
   }
 
   return { meta, records };
 }
+
 
 // Ingest Payment Advice File (PDF or XLSX)
 export async function processPaymentAdviceFile(fileId, fileBuffer, fileName, mimeType) {
@@ -861,9 +1173,11 @@ export async function tallyPaymentAdviceRecords(records) {
 
     const rawInvoice = record.invoiceNumber || "";
     const rawDelivery = record.deliveryNumber || "";
+    const rawDocument = record.documentNumber || "";
 
     const strippedInv = stripLeadingZeros(rawInvoice);
     const strippedDel = stripLeadingZeros(rawDelivery);
+    const strippedDoc = stripLeadingZeros(rawDocument);
 
     let matchQuery = [];
     if (rawInvoice) {
@@ -889,6 +1203,12 @@ export async function tallyPaymentAdviceRecords(records) {
       matchQuery.push({ billNumber: rawDelivery });
     }
 
+    if (rawDocument) {
+      matchQuery.push({ invoiceNumber: rawDocument });
+      matchQuery.push({ deliveryNumber: rawDocument });
+      matchQuery.push({ billNumber: rawDocument });
+    }
+
     if (strippedInv && strippedInv !== rawInvoice) {
       matchQuery.push({ invoiceNumber: strippedInv });
       matchQuery.push({ deliveryNumber: strippedInv });
@@ -899,6 +1219,12 @@ export async function tallyPaymentAdviceRecords(records) {
       matchQuery.push({ deliveryNumber: strippedDel });
       matchQuery.push({ invoiceNumber: strippedDel });
       matchQuery.push({ billNumber: strippedDel });
+    }
+
+    if (strippedDoc && strippedDoc !== rawDocument) {
+      matchQuery.push({ invoiceNumber: strippedDoc });
+      matchQuery.push({ deliveryNumber: strippedDoc });
+      matchQuery.push({ billNumber: strippedDoc });
     }
 
     let annexureRecord = null;

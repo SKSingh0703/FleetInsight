@@ -1156,6 +1156,7 @@ export async function tallyPaymentAdviceRecords(records) {
       totalVariance: 0,
       billSummary: [],
       items: [],
+      unpaidAnnexureItems: [],
     };
   }
 
@@ -1174,16 +1175,19 @@ export async function tallyPaymentAdviceRecords(records) {
     const rawInvoice = record.invoiceNumber || "";
     const rawDelivery = record.deliveryNumber || "";
     const rawDocument = record.documentNumber || "";
+    const rawLr = record.lrNumber || "";
 
     const strippedInv = stripLeadingZeros(rawInvoice);
     const strippedDel = stripLeadingZeros(rawDelivery);
     const strippedDoc = stripLeadingZeros(rawDocument);
+    const strippedLr = stripLeadingZeros(rawLr);
 
     let matchQuery = [];
     if (rawInvoice) {
       matchQuery.push({ invoiceNumber: rawInvoice });
       matchQuery.push({ deliveryNumber: rawInvoice });
       matchQuery.push({ billNumber: rawInvoice });
+      matchQuery.push({ lrNumber: rawInvoice });
 
       const normInv = normalizeBillNo(rawInvoice);
       if (normInv && normInv !== rawInvoice) {
@@ -1201,30 +1205,47 @@ export async function tallyPaymentAdviceRecords(records) {
       matchQuery.push({ deliveryNumber: rawDelivery });
       matchQuery.push({ invoiceNumber: rawDelivery });
       matchQuery.push({ billNumber: rawDelivery });
+      matchQuery.push({ lrNumber: rawDelivery });
     }
 
     if (rawDocument) {
       matchQuery.push({ invoiceNumber: rawDocument });
       matchQuery.push({ deliveryNumber: rawDocument });
       matchQuery.push({ billNumber: rawDocument });
+      matchQuery.push({ lrNumber: rawDocument });
+    }
+
+    if (rawLr) {
+      matchQuery.push({ lrNumber: rawLr });
+      matchQuery.push({ deliveryNumber: rawLr });
+      matchQuery.push({ invoiceNumber: rawLr });
     }
 
     if (strippedInv && strippedInv !== rawInvoice) {
       matchQuery.push({ invoiceNumber: strippedInv });
       matchQuery.push({ deliveryNumber: strippedInv });
       matchQuery.push({ billNumber: strippedInv });
+      matchQuery.push({ lrNumber: strippedInv });
     }
 
     if (strippedDel && strippedDel !== rawDelivery) {
       matchQuery.push({ deliveryNumber: strippedDel });
       matchQuery.push({ invoiceNumber: strippedDel });
       matchQuery.push({ billNumber: strippedDel });
+      matchQuery.push({ lrNumber: strippedDel });
     }
 
     if (strippedDoc && strippedDoc !== rawDocument) {
       matchQuery.push({ invoiceNumber: strippedDoc });
       matchQuery.push({ deliveryNumber: strippedDoc });
       matchQuery.push({ billNumber: strippedDoc });
+      matchQuery.push({ lrNumber: strippedDoc });
+    }
+
+    if (strippedLr && strippedLr !== rawLr) {
+      matchQuery.push({ lrNumber: strippedLr });
+      matchQuery.push({ deliveryNumber: strippedLr });
+      matchQuery.push({ invoiceNumber: strippedLr });
     }
 
     let annexureRecord = null;
@@ -1247,11 +1268,11 @@ export async function tallyPaymentAdviceRecords(records) {
       billNumber = annexureRecord.billNumber || "UNKNOWN_BILL";
       annexureBillAmt = annexureRecord.totalAmount || annexureRecord.freightBaseAmount || 0;
       freightBaseAmt = annexureRecord.freightBaseAmount || 0;
-      
+
       // Calculate 2% TDS on Freight Base Amount
       tdsAmount = Math.round((freightBaseAmt * 0.02) * 100) / 100;
       expectedPayable = Math.round((annexureBillAmt - tdsAmount) * 100) / 100;
-      
+
       totalAnnexureBillAmount += annexureBillAmt;
       variance = Math.round((expectedPayable - advicePaidAmt) * 100) / 100;
 
@@ -1278,6 +1299,7 @@ export async function tallyPaymentAdviceRecords(records) {
           expectedPayable: 0,
           variance: 0,
           status: "MATCHED",
+          matchedAnnexureIds: new Set(),
         });
       }
       const bStat = billMap.get(billNumber);
@@ -1288,6 +1310,9 @@ export async function tallyPaymentAdviceRecords(records) {
       bStat.tdsAmount += tdsAmount;
       bStat.expectedPayable += expectedPayable;
       bStat.variance += variance;
+      if (annexureRecord._id) {
+        bStat.matchedAnnexureIds.add(String(annexureRecord._id));
+      }
     } else {
       totalUnmatched += 1;
       if (isDeduction) {
@@ -1311,10 +1336,65 @@ export async function tallyPaymentAdviceRecords(records) {
     });
   }
 
-  const billSummary = Array.from(billMap.values()).map((b) => ({
-    ...b,
-    status: Math.abs(b.variance) < 1 ? "MATCHED" : b.variance > 0 ? "MATCHED_SHORT_PAID" : "MATCHED_EXCESS_PAID",
-  }));
+  // Find all unpaid Annexure line items for matched bills
+  const allUnpaidItems = [];
+  const billSummary = [];
+
+  for (const [bNo, bStat] of billMap.entries()) {
+    if (!bNo || bNo === "NOT_FOUND" || bNo === "UNKNOWN_BILL") continue;
+
+    const allBillAnnexures = await AnnexureRecord.find({ billNumber: bNo }).lean();
+    const matchedIds = bStat.matchedAnnexureIds || new Set();
+
+    const unpaidForThisBill = [];
+    let unpaidBillAmount = 0;
+
+    for (const ann of allBillAnnexures) {
+      if (!matchedIds.has(String(ann._id))) {
+        const itemAmt = ann.totalAmount || ann.freightBaseAmount || 0;
+        unpaidBillAmount += itemAmt;
+
+        const unpaidItem = {
+          billNumber: bNo,
+          invoiceNumber: ann.invoiceNumber || "",
+          deliveryNumber: ann.deliveryNumber || "",
+          lrNumber: ann.lrNumber || "",
+          lrDate: ann.lrDate,
+          vehicleNumber: ann.vehicleNumber || "",
+          materialType: ann.materialType || "",
+          consignorName: ann.consignorName || "",
+          consigneeName: ann.consigneeName || "",
+          destination: ann.destination || "",
+          freightBaseAmount: ann.freightBaseAmount || 0,
+          totalAmount: itemAmt,
+          status: "UNPAID_SHORT_PAID",
+          annexureRecord: ann,
+        };
+
+        unpaidForThisBill.push(unpaidItem);
+        allUnpaidItems.push(unpaidItem);
+      }
+    }
+
+    billSummary.push({
+      billNumber: bNo,
+      totalBillItems: allBillAnnexures.length,
+      paidAdviceItemsCount: bStat.deliveryCount,
+      unpaidAnnexureItemsCount: unpaidForThisBill.length,
+
+      totalBillAmount: allBillAnnexures.reduce((sum, a) => sum + (a.totalAmount || a.freightBaseAmount || 0), 0),
+      advicePaidAmt: bStat.advicePaidAmt,
+      unpaidAnnexureAmount: Math.round(unpaidBillAmount * 100) / 100,
+
+      freightBaseAmt: bStat.freightBaseAmt,
+      tdsAmount: bStat.tdsAmount,
+      expectedPayable: bStat.expectedPayable,
+      variance: bStat.variance,
+
+      status: unpaidForThisBill.length > 0 ? "PARTIALLY_PAID" : Math.abs(bStat.variance) < 1 ? "MATCHED" : bStat.variance > 0 ? "MATCHED_SHORT_PAID" : "MATCHED_EXCESS_PAID",
+      unpaidItems: unpaidForThisBill,
+    });
+  }
 
   const totalVariance = totalAnnexureBillAmount - totalAdvicePaidAmount;
 
@@ -1327,5 +1407,6 @@ export async function tallyPaymentAdviceRecords(records) {
     totalVariance,
     billSummary,
     items,
+    unpaidAnnexureItems: allUnpaidItems,
   };
 }

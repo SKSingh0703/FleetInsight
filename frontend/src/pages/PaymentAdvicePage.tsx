@@ -62,7 +62,185 @@ export default function PaymentAdvicePage() {
   const handleDownloadExcel = () => {
     if (!tallyData || !report) return;
 
-    // Build line-by-line breakdown rows matching the exact table columns
+    const wb = XLSX.utils.book_new();
+
+    // 1. Complete Bill Line Items (Paid + Unpaid grouped by Bill Number)
+    const completeBillRows: any[] = [];
+
+    (report.billSummary || []).forEach((b: any) => {
+      // Add paid items under this bill
+      const paidItemsForBill = (report.items || []).filter((i) => i.billNumber === b.billNumber);
+      paidItemsForBill.forEach((item) => {
+        const ann = item.annexureRecord || {};
+        const lrDateStr = ann.lrDate ? new Date(ann.lrDate).toLocaleDateString("en-IN") : "";
+        const delDateStr = ann.deliveryDate ? new Date(ann.deliveryDate).toLocaleDateString("en-IN") : "";
+        const freightBase = ann.freightBaseAmount || item.freightBaseAmount || 0;
+        const tds2Pct = item.tdsAmount || (freightBase ? Math.round(freightBase * 0.02 * 100) / 100 : 0);
+        const expectedNetPay = item.expectedPayable || (item.annexureBillAmount ? Math.round((item.annexureBillAmount - tds2Pct) * 100) / 100 : 0);
+
+        completeBillRows.push({
+          "Bill Number": b.billNumber,
+          "Reconciliation Status": "PAID IN ADVICE ✅",
+          "Consignment / LR No": ann.lrNumber || item.lrNumber || "—",
+          "LR Date": lrDateStr || "—",
+          "Delivery No": item.deliveryNumber || ann.deliveryNumber || "—",
+          "Delivery Date": delDateStr || "—",
+          "Invoice No (TSL)": item.invoiceNumber || ann.invoiceNumber || "—",
+          "Vehicle No": item.vehicleNumber || ann.vehicleNumber || "—",
+          "Material Type": ann.materialType || "—",
+          "Consignor / Shipper": ann.consignorName || "—",
+          "Consignee / Receiving": ann.consigneeName || "—",
+          "Destination": ann.destination || "—",
+          "Net Wt (MT)": ann.netWeight || 0,
+          "Gross Wt (MT)": ann.grossWeight || 0,
+          "Freight Base Amount (₹)": freightBase,
+          "TDS (2% Freight) (₹)": tds2Pct,
+          "Expected Net Value (₹)": expectedNetPay,
+          "Annexure Total Value (₹)": item.annexureBillAmount || ann.totalAmount || 0,
+          "Advice Paid Net (₹)": item.advicePaidAmount || 0,
+          "Shortage / Unpaid Value (₹)": item.variance > 0 ? item.variance : 0,
+          "FI Document / Payment Ref": item.documentNumber || item.paymentReferenceNumber || "—",
+        });
+      });
+
+      // Add unpaid items under this bill
+      if (b.unpaidItems && Array.isArray(b.unpaidItems)) {
+        b.unpaidItems.forEach((u: any) => {
+          const lrDateStr = u.lrDate ? new Date(u.lrDate).toLocaleDateString("en-IN") : "";
+          const delDateStr = u.deliveryDate ? new Date(u.deliveryDate).toLocaleDateString("en-IN") : "";
+          const freightBase = u.freightBaseAmount || 0;
+          const tds2Pct = Math.round(freightBase * 0.02 * 100) / 100;
+          const totalVal = u.totalAmount || 0;
+          const expectedNetPay = Math.round((totalVal - tds2Pct) * 100) / 100;
+
+          completeBillRows.push({
+            "Bill Number": b.billNumber,
+            "Reconciliation Status": "UNPAID / NOT IN ADVICE ⚠️",
+            "Consignment / LR No": u.lrNumber || "—",
+            "LR Date": lrDateStr || "—",
+            "Delivery No": u.deliveryNumber || "—",
+            "Delivery Date": delDateStr || "—",
+            "Invoice No (TSL)": u.invoiceNumber || "—",
+            "Vehicle No": u.vehicleNumber || "—",
+            "Material Type": u.materialType || "—",
+            "Consignor / Shipper": u.consignorName || "—",
+            "Consignee / Receiving": u.consigneeName || "—",
+            "Destination": u.destination || "—",
+            "Net Wt (MT)": u.annexureRecord?.netWeight || 0,
+            "Gross Wt (MT)": u.annexureRecord?.grossWeight || 0,
+            "Freight Base Amount (₹)": freightBase,
+            "TDS (2% Freight) (₹)": tds2Pct,
+            "Expected Net Value (₹)": expectedNetPay,
+            "Annexure Total Value (₹)": totalVal,
+            "Advice Paid Net (₹)": 0,
+            "Shortage / Unpaid Value (₹)": totalVal,
+            "FI Document / Payment Ref": "—",
+          });
+        });
+      }
+    });
+
+    if (completeBillRows.length > 0) {
+      const wsComplete = XLSX.utils.json_to_sheet(completeBillRows);
+      wsComplete["!cols"] = [
+        { wch: 22 }, // Bill Number
+        { wch: 28 }, // Status
+        { wch: 24 }, // LR No
+        { wch: 16 }, // LR Date
+        { wch: 20 }, // Delivery No
+        { wch: 16 }, // Delivery Date
+        { wch: 20 }, // Invoice No
+        { wch: 16 }, // Vehicle No
+        { wch: 18 }, // Material Type
+        { wch: 32 }, // Consignor
+        { wch: 32 }, // Consignee
+        { wch: 25 }, // Destination
+        { wch: 14 }, // Net Wt
+        { wch: 14 }, // Gross Wt
+        { wch: 22 }, // Freight Base
+        { wch: 20 }, // TDS
+        { wch: 22 }, // Expected Net Value
+        { wch: 22 }, // Annexure Total
+        { wch: 20 }, // Advice Paid Net
+        { wch: 22 }, // Shortage / Unpaid Value
+        { wch: 26 }, // FI Document / Payment Ref
+      ];
+      XLSX.utils.book_append_sheet(wb, wsComplete, "Complete Bill Line Items");
+    }
+
+    // 2. Bill-Level Summary Breakdown
+    const billSummaryRows = (report.billSummary || []).map((b: any) => {
+      const unpaidCount = b.unpaidAnnexureItemsCount || 0;
+      const totalCount = b.totalBillItems || b.deliveryCount || 0;
+      const paidCount = b.paidAdviceItemsCount || b.deliveryCount || 0;
+      const statusText = unpaidCount > 0
+        ? `PARTIALLY PAID (${unpaidCount} Unpaid Item${unpaidCount > 1 ? "s" : ""})`
+        : "FULLY PAID";
+
+      return {
+        "Bill Number": b.billNumber,
+        "Reconciliation Status": statusText,
+        "Total Bill Deliveries": totalCount,
+        "Paid Advice Deliveries": paidCount,
+        "Unpaid Deliveries Count": unpaidCount,
+        "Total Bill Value (₹)": b.totalBillAmount || b.annexureBillAmt || 0,
+        "Advice Paid Value (₹)": b.advicePaidAmt || 0,
+        "Unpaid Shortage Value (₹)": b.unpaidAnnexureAmount || 0,
+        "Freight Base Value (₹)": b.freightBaseAmt || 0,
+        "TDS (2% Freight) (₹)": b.tdsAmount || 0,
+        "Expected Net Value (₹)": b.expectedPayable || 0,
+        "Variance (₹)": b.variance || 0,
+      };
+    });
+
+    if (billSummaryRows.length > 0) {
+      const wsBillSummary = XLSX.utils.json_to_sheet(billSummaryRows);
+      wsBillSummary["!cols"] = [
+        { wch: 22 }, { wch: 30 }, { wch: 22 }, { wch: 22 }, { wch: 24 },
+        { wch: 22 }, { wch: 22 }, { wch: 24 }, { wch: 22 }, { wch: 20 },
+        { wch: 22 }, { wch: 18 },
+      ];
+      XLSX.utils.book_append_sheet(wb, wsBillSummary, "Bill Summary Totals");
+    }
+
+    // 3. Unpaid & Missing Deliveries Breakdown
+    const unpaidItemsRows: any[] = [];
+    (report.billSummary || []).forEach((b: any) => {
+      if (b.unpaidItems && Array.isArray(b.unpaidItems)) {
+        b.unpaidItems.forEach((u: any) => {
+          const lrDateStr = u.lrDate ? new Date(u.lrDate).toLocaleDateString("en-IN") : "";
+          const delDateStr = u.deliveryDate ? new Date(u.deliveryDate).toLocaleDateString("en-IN") : "";
+          unpaidItemsRows.push({
+            "Bill Number": b.billNumber,
+            "Consignment / LR No": u.lrNumber || "—",
+            "LR Date": lrDateStr || "—",
+            "Delivery No": u.deliveryNumber || "—",
+            "Delivery Date": delDateStr || "—",
+            "Invoice No (TSL)": u.invoiceNumber || "—",
+            "Vehicle No": u.vehicleNumber || "—",
+            "Material Type": u.materialType || "—",
+            "Consignor / Shipper": u.consignorName || "—",
+            "Consignee / Receiving": u.consigneeName || "—",
+            "Destination": u.destination || "—",
+            "Freight Base Amount (₹)": u.freightBaseAmount || 0,
+            "Total Unpaid Value (₹)": u.totalAmount || 0,
+            "Payment Status": "UNPAID / NOT IN ADVICE",
+          });
+        });
+      }
+    });
+
+    if (unpaidItemsRows.length > 0) {
+      const wsUnpaid = XLSX.utils.json_to_sheet(unpaidItemsRows);
+      wsUnpaid["!cols"] = [
+        { wch: 22 }, { wch: 24 }, { wch: 16 }, { wch: 20 }, { wch: 16 },
+        { wch: 20 }, { wch: 16 }, { wch: 18 }, { wch: 32 }, { wch: 32 },
+        { wch: 25 }, { wch: 22 }, { wch: 22 }, { wch: 26 },
+      ];
+      XLSX.utils.book_append_sheet(wb, wsUnpaid, "Unpaid Deliveries Only");
+    }
+
+    // 4. Record-by-Record Payment Advice Line Items
     const breakdownRows = (report.items || []).map((item) => {
       const ann = item.annexureRecord || {};
 
@@ -115,41 +293,24 @@ export default function PaymentAdvicePage() {
       };
     });
 
-    const wb = XLSX.utils.book_new();
     const wsBreakdown = XLSX.utils.json_to_sheet(breakdownRows);
-
     wsBreakdown["!cols"] = [
-      { wch: 22 }, // Invoice / Delivery No
-      { wch: 22 }, // Matched Bill No
-      { wch: 26 }, // Match Status
-      { wch: 16 }, // Vehicle No
-      { wch: 24 }, // LR Number & Date
-      { wch: 18 }, // Material Type
-      { wch: 40 }, // Consignor -> Consignee
-      { wch: 25 }, // Destination
-      { wch: 18 }, // Net / Gross Wt
-      { wch: 22 }, // Freight Base Amount
-      { wch: 20 }, // TDS (2% Freight)
-      { wch: 24 }, // Expected Net Payable
-      { wch: 22 }, // Taxes
-      { wch: 22 }, // Annexure Total
-      { wch: 20 }, // Advice Paid Net
-      { wch: 22 }, // Variance
-      { wch: 18 }, // FI Document No
-      { wch: 18 }, // Payment Ref No
-      { wch: 35 }, // Source Annexure File
+      { wch: 22 }, { wch: 22 }, { wch: 26 }, { wch: 16 }, { wch: 24 },
+      { wch: 18 }, { wch: 40 }, { wch: 25 }, { wch: 18 }, { wch: 22 },
+      { wch: 20 }, { wch: 24 }, { wch: 22 }, { wch: 22 }, { wch: 20 },
+      { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 35 },
     ];
 
-    XLSX.utils.book_append_sheet(wb, wsBreakdown, "Payment Advice Breakdown");
+    XLSX.utils.book_append_sheet(wb, wsBreakdown, "Payment Advice Raw Items");
 
     const safeFileName = tallyData.originalName.replace(/\.[^/.]+$/, "");
-    const exportFileName = `Payment_Advice_Breakdown_${safeFileName}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const exportFileName = `Full_Bill_Reconciliation_${safeFileName}_${new Date().toISOString().slice(0, 10)}.xlsx`;
 
     XLSX.writeFile(wb, exportFileName);
 
     toast({
-      title: "Excel Export Downloaded",
-      description: `Exported ${breakdownRows.length} table rows to ${exportFileName}`,
+      title: "Full Reconciliation Excel Exported",
+      description: `Exported complete bill line items (${completeBillRows.length} total deliveries), bill summaries, and advice items.`,
     });
   };
 
@@ -319,6 +480,117 @@ export default function PaymentAdvicePage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Bill-Level Summary & Unpaid Deliveries Breakdown */}
+          {report.billSummary && report.billSummary.length > 0 && (
+            <Card className="border-primary/20 bg-card shadow-sm">
+              <CardHeader className="py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <span>Bill-Level Payment Reconciliation</span>
+                      <Badge variant="outline" className="text-xs font-normal">
+                        {report.billSummary.length} Matched Annexure Bill{report.billSummary.length > 1 ? "s" : ""}
+                      </Badge>
+                    </CardTitle>
+                    <CardDescription className="text-xs mt-1">
+                      Summary of Annexure Bills identified from Payment Advice. Compares total bill items against paid advice items to detect unpaid deliveries.
+                    </CardDescription>
+                  </div>
+
+                  <Button
+                    size="sm"
+                    onClick={handleDownloadExcel}
+                    className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium gap-1.5 shadow-sm"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Export Bill Reconciliation Excel
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {report.billSummary.map((b: any, idx: number) => {
+                  const unpaidCount = b.unpaidAnnexureItemsCount || 0;
+                  const totalCount = b.totalBillItems || b.deliveryCount || 0;
+                  const paidCount = b.paidAdviceItemsCount || b.deliveryCount || 0;
+                  const hasUnpaid = unpaidCount > 0;
+
+                  return (
+                    <div key={idx} className="border rounded-lg p-4 space-y-3 bg-background/50">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm text-primary">{b.billNumber}</span>
+                          {hasUnpaid ? (
+                            <Badge variant="destructive" className="text-xs">
+                              {unpaidCount} Unpaid Deliveries ({paidCount}/{totalCount} Paid)
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-emerald-600 text-white text-xs">
+                              Fully Paid ({paidCount}/{totalCount} Deliveries)
+                            </Badge>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-4 text-xs">
+                          <div>
+                            <span className="text-muted-foreground">Bill Total: </span>
+                            <span className="font-semibold">₹{(b.totalBillAmount || b.annexureBillAmt || 0).toLocaleString("en-IN")}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Advice Paid: </span>
+                            <span className="font-semibold text-emerald-600">₹{(b.advicePaidAmt || 0).toLocaleString("en-IN")}</span>
+                          </div>
+                          {hasUnpaid && (
+                            <div>
+                              <span className="text-muted-foreground">Unpaid Value: </span>
+                              <span className="font-bold text-destructive">₹{(b.unpaidAnnexureAmount || 0).toLocaleString("en-IN")}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Unpaid Items Table for this Bill */}
+                      {hasUnpaid && b.unpaidItems && b.unpaidItems.length > 0 && (
+                        <div className="mt-3 pt-3 border-t">
+                          <p className="text-xs font-bold text-destructive mb-2">
+                            ⚠️ Deliveries in Bill {b.billNumber} NOT Received / NOT Paid in this Advice ({b.unpaidItems.length} items):
+                          </p>
+                          <div className="overflow-x-auto rounded border">
+                            <Table className="text-xs">
+                              <TableHeader className="bg-destructive/5">
+                                <TableRow>
+                                  <TableHead className="py-1.5 font-bold">Consignment / LR No</TableHead>
+                                  <TableHead className="py-1.5 font-bold">Delivery No</TableHead>
+                                  <TableHead className="py-1.5 font-bold">Invoice No (TSL)</TableHead>
+                                  <TableHead className="py-1.5">Vehicle No</TableHead>
+                                  <TableHead className="py-1.5">Consignee</TableHead>
+                                  <TableHead className="py-1.5 text-right font-bold">Freight Base (₹)</TableHead>
+                                  <TableHead className="py-1.5 text-right font-bold text-destructive">Unpaid Total (₹)</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {b.unpaidItems.map((u: any, uIdx: number) => (
+                                  <TableRow key={uIdx} className="bg-destructive/5 hover:bg-destructive/10">
+                                    <TableCell className="py-1.5 font-semibold text-primary">{u.lrNumber || "-"}</TableCell>
+                                    <TableCell className="py-1.5 font-mono">{u.deliveryNumber || "-"}</TableCell>
+                                    <TableCell className="py-1.5 font-mono">{u.invoiceNumber || "-"}</TableCell>
+                                    <TableCell className="py-1.5">{u.vehicleNumber || "-"}</TableCell>
+                                    <TableCell className="py-1.5">{u.consigneeName || "-"}</TableCell>
+                                    <TableCell className="py-1.5 text-right">₹{(u.freightBaseAmount || 0).toLocaleString("en-IN")}</TableCell>
+                                    <TableCell className="py-1.5 text-right font-bold text-destructive">₹{(u.totalAmount || 0).toLocaleString("en-IN")}</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Delivery-Wise Itemized Table */}
           <Card>

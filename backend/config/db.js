@@ -80,14 +80,18 @@ async function backfillTripKeys() {
 }
 
 export async function connectDB() {
-  // Mongoose defaults are fine for MVP; keep this as a single place to tweak later.
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
+  }
+
   mongoose.set("strictQuery", true);
-  mongoose.set("bufferCommands", false);
-  mongoose.set("bufferTimeoutMS", 2000);
+  mongoose.set("bufferCommands", true);
+
   await mongoose.connect(MONGO_URI, {
-    serverSelectionTimeoutMS: 5000,
-    connectTimeoutMS: 5000,
-    socketTimeoutMS: 20000,
+    serverSelectionTimeoutMS: 15000,
+    connectTimeoutMS: 15000,
+    socketTimeoutMS: 45000,
+    maxPoolSize: 50,
   });
 
   const shouldBackfill = String(process.env.BACKFILL_TRIPKEYS || "").toLowerCase() === "true";

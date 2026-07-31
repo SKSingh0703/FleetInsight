@@ -195,7 +195,7 @@ export async function processAnnexureFile(fileId) {
 
   let workbook;
   try {
-    workbook = xlsx.read(buffer, { type: "buffer", cellDates: true, raw: false });
+    workbook = xlsx.read(buffer, { type: "buffer", cellDates: false, raw: false });
   } catch (err) {
     await DriveFile.updateOne(
       { fileId },

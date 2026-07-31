@@ -5,7 +5,7 @@ import { connectDB } from "../config/db.js";
 import { DriveFile } from "../models/driveFileModel.js";
 import { DriveCrawlState } from "../models/driveCrawlStateModel.js";
 import { AnnexureRecord } from "../models/annexureRecordModel.js";
-import { isAnnexureCandidateName, getRootFolderId } from "../services/driveScannerService.js";
+import { isAnnexureCandidateName } from "../services/driveScannerService.js";
 import { processAllPendingAnnexures } from "../services/annexureExtractorService.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -46,23 +46,11 @@ async function reprocess() {
   const res = await processAllPendingAnnexures();
   console.log("Extraction Result:", res);
 
-  const rootFolderId = getRootFolderId();
   const totalExtracted = await AnnexureRecord.countDocuments({});
   const totalAnnexuresProcessed = await DriveFile.countDocuments({
     isAnnexureCandidate: true,
     extractionStatus: "SUCCESS",
   });
-
-  await DriveCrawlState.findOneAndUpdate(
-    { rootFolderId },
-    {
-      $set: {
-        "stats.annexureCandidates": candidateCount,
-        "stats.annexuresProcessed": totalAnnexuresProcessed,
-        "stats.rowsExtracted": totalExtracted,
-      },
-    }
-  );
 
   console.log(`Final Stats: Annexure Files=${candidateCount}, Processed Files=${totalAnnexuresProcessed}, Extracted Rows=${totalExtracted}`);
   process.exit(0);

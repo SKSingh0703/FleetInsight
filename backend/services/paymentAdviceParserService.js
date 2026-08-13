@@ -224,6 +224,99 @@ function parse2LinePdfRows(lines, meta, fileId, fileName) {
   return records;
 }
 
+// Parse 2-Line Bill Reference PDF Layout (Layout A2 - Tata Steel Bill Reference Advice)
+function parseBillReference2LinePdfRows(lines, meta, fileId, fileName) {
+  const records = [];
+  let pageNumber = 1;
+  let rowIndex = 0;
+
+  for (let i = 0; i < lines.length - 1; i++) {
+    const line1 = lines[i].trim();
+    const line2 = lines[i + 1].trim();
+
+    if (line1.includes("Page ") && line1.includes(" of ")) {
+      const pMatch = line1.match(/Page\s+(\d+)\s+of\s+(\d+)/i);
+      if (pMatch) pageNumber = Number(pMatch[1]);
+      continue;
+    }
+
+    // Match Line 1: Document Number (8-12 digits), Bill Reference No (e.g. LOG/197/26-27), Invoice Amount, Deductions
+    // Example: 1900014714 LOG/197/26-27 11305.34 96.00
+    const m1 = line1.match(/^(\d{8,12})\s+([A-Za-z0-9\/_\-\.]+)\s+([\d,\.\-]+)\s+([\d,\.\-]+)$/);
+    if (!m1) continue;
+
+    const documentNumber = cleanString(m1[1]);
+    const billRef = cleanString(m1[2]);
+    const grossAmount = parseAmount(m1[3]);
+    const deductionAmount = parseAmount(m1[4]);
+
+    // Match Line 2: Net Amount, Deduction code (optional, e.g. KR)
+    // Example: 11209.34 KR  or  11209.34
+    const m2 = line2.match(/^([\d,\.\-]+)(?:\s+([A-Za-z0-9]+))?$/);
+    if (!m2) continue;
+
+    const netAmount = parseAmount(m2[1]);
+    const deductionCode = cleanString(m2[2] || "");
+
+    if (!billRef || billRef.toLowerCase().includes("reference") || billRef.toLowerCase().includes("bill") || billRef.toLowerCase().includes("document")) {
+      continue;
+    }
+
+    if (grossAmount === 0 && netAmount === 0) continue;
+
+    rowIndex += 1;
+    const docScope = meta.paymentDocNo ? `doc_${meta.paymentDocNo}` : fileId;
+    const adviceKeyPayload = `${docScope}:${pageNumber}:${rowIndex}:${billRef}:${documentNumber}:${grossAmount}:${netAmount}`;
+    const adviceKey = crypto.createHash("sha256").update(adviceKeyPayload).digest("hex");
+
+    records.push({
+      adviceKey,
+      fileId,
+      fileName,
+      paymentDocNo: meta.paymentDocNo,
+      paymentDate: meta.valueDate,
+      bankRefNo: meta.bankRefNo,
+      vendorCode: meta.vendorCode,
+
+      invoiceNumber: billRef,
+      billNumber: billRef,
+      documentNumber,
+      deductionCode,
+
+      grossAmount,
+      deductionAmount,
+      netAmount,
+      currency: meta.currency,
+
+      pageNumber,
+      rowNumber: rowIndex,
+
+      raw: {
+        line1,
+        line2,
+        documentNumber,
+        billReferenceNo: billRef,
+        grossAmount: m1[3],
+        deductionAmount: m1[4],
+        netAmount: m2[1],
+        deductionCode,
+      },
+      headerMapping: {
+        documentNumber: "Document Number",
+        invoiceNumber: "Bill Reference No",
+        grossAmount: "Invoice Amount",
+        deductionAmount: "Deductions",
+        netAmount: "Net Amount",
+        deductionCode: "Deduction Code",
+      },
+    });
+
+    i += 1; // Skip line2
+  }
+
+  return records;
+}
+
 // Parse Single-Line Tabular PDF Layout (Layout B)
 function parseSingleLinePdfRows(lines, meta, fileId, fileName) {
   const records = [];
@@ -679,6 +772,9 @@ export async function parsePdfPaymentAdvice(buffer, fileId, fileName) {
   const records2LineStd = parse2LinePdfRows(linesStd, meta, fileId, fileName);
   const records2LineY = parse2LinePdfRows(linesY, meta, fileId, fileName);
 
+  const recordsBillRef2LineStd = parseBillReference2LinePdfRows(linesStd, meta, fileId, fileName);
+  const recordsBillRef2LineY = parseBillReference2LinePdfRows(linesY, meta, fileId, fileName);
+
   const recordsSingleStd = parseSingleLinePdfRows(linesStd, meta, fileId, fileName);
   const recordsSingleY = parseSingleLinePdfRows(linesY, meta, fileId, fileName);
 
@@ -703,6 +799,8 @@ export async function parsePdfPaymentAdvice(buffer, fileId, fileName) {
   };
 
   const list = [
+    { recs: recordsBillRef2LineStd, score: scoreCandidate(recordsBillRef2LineStd, true), name: "BillRef2LineStd" },
+    { recs: recordsBillRef2LineY, score: scoreCandidate(recordsBillRef2LineY, true), name: "BillRef2LineY" },
     { recs: records2LineStd, score: scoreCandidate(records2LineStd, true), name: "2LineStd" },
     { recs: records2LineY, score: scoreCandidate(records2LineY, true), name: "2LineY" },
     { recs: recordsSingleStd, score: scoreCandidate(recordsSingleStd, true), name: "SingleStd" },
@@ -1176,30 +1274,47 @@ export async function tallyPaymentAdviceRecords(records) {
     const rawDelivery = record.deliveryNumber || "";
     const rawDocument = record.documentNumber || "";
     const rawLr = record.lrNumber || "";
+    const rawBill = record.billNumber || "";
 
     const strippedInv = stripLeadingZeros(rawInvoice);
     const strippedDel = stripLeadingZeros(rawDelivery);
     const strippedDoc = stripLeadingZeros(rawDocument);
     const strippedLr = stripLeadingZeros(rawLr);
+    const strippedBill = stripLeadingZeros(rawBill);
 
     let matchQuery = [];
-    if (rawInvoice) {
-      matchQuery.push({ invoiceNumber: rawInvoice });
-      matchQuery.push({ deliveryNumber: rawInvoice });
-      matchQuery.push({ billNumber: rawInvoice });
-      matchQuery.push({ lrNumber: rawInvoice });
 
-      const normInv = normalizeBillNo(rawInvoice);
-      if (normInv && normInv !== rawInvoice) {
+    const addCoreBillMatch = (val) => {
+      if (!val) return;
+      matchQuery.push({ invoiceNumber: val });
+      matchQuery.push({ deliveryNumber: val });
+      matchQuery.push({ billNumber: val });
+      matchQuery.push({ lrNumber: val });
+
+      const normInv = normalizeBillNo(val);
+      if (normInv && normInv !== val) {
         matchQuery.push({ billNumber: normInv });
       }
 
-      const baseCode = getBillBaseCode(rawInvoice);
+      const baseCode = getBillBaseCode(val);
       if (baseCode && baseCode.length >= 3) {
         const escapedBase = baseCode.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         matchQuery.push({ billNumber: new RegExp(`^${escapedBase}`, "i") });
       }
-    }
+
+      // Prefix-free bill matching (e.g. LOG/197/26-27 or NPMT/197/26-27 -> core "197/26-27")
+      const m = val.match(/^[A-Za-z]+[\/\-_](.+)$/);
+      if (m) {
+        const coreBill = m[1];
+        const escapedCore = coreBill.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        matchQuery.push({ billNumber: new RegExp(escapedCore + "$", "i") });
+        matchQuery.push({ invoiceNumber: new RegExp(escapedCore + "$", "i") });
+        matchQuery.push({ billNumber: new RegExp("[A-Za-z0-9_\\-/]*" + escapedCore, "i") });
+      }
+    };
+
+    addCoreBillMatch(rawInvoice);
+    addCoreBillMatch(rawBill);
 
     if (rawDelivery) {
       matchQuery.push({ deliveryNumber: rawDelivery });
@@ -1213,6 +1328,10 @@ export async function tallyPaymentAdviceRecords(records) {
       matchQuery.push({ deliveryNumber: rawDocument });
       matchQuery.push({ billNumber: rawDocument });
       matchQuery.push({ lrNumber: rawDocument });
+      matchQuery.push({ documentNumber: rawDocument });
+      matchQuery.push({ "raw.documentNumber": rawDocument });
+      matchQuery.push({ "raw.FI Document No Details": rawDocument });
+      matchQuery.push({ "raw.Document Number": rawDocument });
     }
 
     if (rawLr) {
@@ -1221,25 +1340,19 @@ export async function tallyPaymentAdviceRecords(records) {
       matchQuery.push({ invoiceNumber: rawLr });
     }
 
-    if (strippedInv && strippedInv !== rawInvoice) {
-      matchQuery.push({ invoiceNumber: strippedInv });
-      matchQuery.push({ deliveryNumber: strippedInv });
-      matchQuery.push({ billNumber: strippedInv });
-      matchQuery.push({ lrNumber: strippedInv });
-    }
-
+    if (strippedInv && strippedInv !== rawInvoice) addCoreBillMatch(strippedInv);
+    if (strippedBill && strippedBill !== rawBill) addCoreBillMatch(strippedBill);
     if (strippedDel && strippedDel !== rawDelivery) {
       matchQuery.push({ deliveryNumber: strippedDel });
       matchQuery.push({ invoiceNumber: strippedDel });
       matchQuery.push({ billNumber: strippedDel });
-      matchQuery.push({ lrNumber: strippedDel });
     }
 
     if (strippedDoc && strippedDoc !== rawDocument) {
       matchQuery.push({ invoiceNumber: strippedDoc });
       matchQuery.push({ deliveryNumber: strippedDoc });
       matchQuery.push({ billNumber: strippedDoc });
-      matchQuery.push({ lrNumber: strippedDoc });
+      matchQuery.push({ documentNumber: strippedDoc });
     }
 
     if (strippedLr && strippedLr !== rawLr) {

@@ -10,6 +10,13 @@ function cleanToken(val) {
   return s;
 }
 
+function extractCoreBill(val) {
+  if (!val) return "";
+  let s = cleanToken(val);
+  const m = s.match(/^[A-Z]+[\/\-_](.+)$/);
+  return m ? m[1] : s;
+}
+
 export async function runReconciliation() {
   const annexures = await AnnexureRecord.find({}).lean();
   const advices = await PaymentAdviceRecord.find({}).lean();
@@ -22,17 +29,27 @@ export async function runReconciliation() {
   const adviceByInvoice = new Map();
   const adviceByVehicle = new Map();
   const adviceByBill = new Map();
+  const adviceByCoreBill = new Map();
+  const adviceByDocNo = new Map();
 
   for (const adv of advices) {
     const del = cleanToken(adv.deliveryNumber);
     const inv = cleanToken(adv.invoiceNumber);
     const veh = cleanToken(adv.vehicleNumber);
     const bill = cleanToken(adv.billNumber);
+    const docNo = cleanToken(adv.documentNumber);
+
+    const coreInv = extractCoreBill(adv.invoiceNumber);
+    const coreBill = extractCoreBill(adv.billNumber);
 
     if (del && !adviceByDelivery.has(del)) adviceByDelivery.set(del, adv);
     if (inv && !adviceByInvoice.has(inv)) adviceByInvoice.set(inv, adv);
     if (veh && !adviceByVehicle.has(veh)) adviceByVehicle.set(veh, adv);
     if (bill && !adviceByBill.has(bill)) adviceByBill.set(bill, adv);
+    if (docNo && !adviceByDocNo.has(docNo)) adviceByDocNo.set(docNo, adv);
+
+    if (coreInv && !adviceByCoreBill.has(coreInv)) adviceByCoreBill.set(coreInv, adv);
+    if (coreBill && !adviceByCoreBill.has(coreBill)) adviceByCoreBill.set(coreBill, adv);
   }
 
   // Phase 1: Reconcile each Annexure record against Payment Advices using Priority Order
@@ -41,6 +58,10 @@ export async function runReconciliation() {
     const inv = cleanToken(ann.invoiceNumber);
     const veh = cleanToken(ann.vehicleNumber);
     const bill = cleanToken(ann.billNumber);
+
+    const coreInv = extractCoreBill(ann.invoiceNumber);
+    const coreBill = extractCoreBill(ann.billNumber);
+    const docNo = cleanToken(ann.documentNumber || ann.raw?.documentNumber || ann.raw?.["FI Document No Details"] || ann.raw?.["Document Number"]);
 
     let match = null;
     let priority = "UNMATCHED";
@@ -54,14 +75,26 @@ export async function runReconciliation() {
       match = adviceByInvoice.get(inv);
       priority = "2_INVOICE_NUMBER";
       reason = `Matched by Invoice Number: ${inv}`;
-    } else if (veh && adviceByVehicle.has(veh)) {
-      match = adviceByVehicle.get(veh);
-      priority = "3_VEHICLE_NUMBER";
-      reason = `Matched by Vehicle Number: ${veh}`;
     } else if (bill && adviceByBill.has(bill)) {
       match = adviceByBill.get(bill);
-      priority = "4_BILL_NUMBER";
+      priority = "3_BILL_NUMBER";
       reason = `Matched by Bill Number: ${bill}`;
+    } else if (coreBill && adviceByCoreBill.has(coreBill)) {
+      match = adviceByCoreBill.get(coreBill);
+      priority = "4_CORE_BILL_NUMBER";
+      reason = `Matched by Core Bill Reference: ${coreBill}`;
+    } else if (coreInv && adviceByCoreBill.has(coreInv)) {
+      match = adviceByCoreBill.get(coreInv);
+      priority = "4_CORE_BILL_NUMBER";
+      reason = `Matched by Core Invoice Reference: ${coreInv}`;
+    } else if (docNo && adviceByDocNo.has(docNo)) {
+      match = adviceByDocNo.get(docNo);
+      priority = "5_DOCUMENT_NUMBER";
+      reason = `Matched by Document Number: ${docNo}`;
+    } else if (veh && adviceByVehicle.has(veh)) {
+      match = adviceByVehicle.get(veh);
+      priority = "6_VEHICLE_NUMBER";
+      reason = `Matched by Vehicle Number: ${veh}`;
     }
 
     const reconKeyPayload = `${ann.annexureKey}:${match ? match.adviceKey : "unmatched"}`;
